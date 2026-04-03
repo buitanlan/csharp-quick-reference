@@ -53,6 +53,7 @@ sẽ dùng các thông tin này để đảm bảo an toàn kiểu khi nó cấp
     - [15.3 Pattern matching](#153-pattern-matching)
   - [16. Unsafe \& unmanaged types (overview), function pointers](#16-unsafe--unmanaged-types-overview-function-pointers)
   - [17. Sơ đồ “type tree” (ASCII)](#17-sơ-đồ-type-tree-ascii)
+  - [18. Union types (C# 15)](#18-union-types-c-15)
 
 ---
 
@@ -399,3 +400,67 @@ object
    ├─ delegate (Action, Func<...>, custom delegates)
    └─ dynamic (runtime-bound)
 ```
+
+---
+
+## 18. Union types (C# 15)
+
+C# 15 giới thiệu **union types** — một tính năng được mong đợi lâu dài, cho phép khai báo một kiểu có thể là đúng một trong số các kiểu đã xác định từ trước (tập đóng). Tính năng này tương tự *discriminated unions* trong F# hoặc *union types* trong TypeScript, nhưng theo phong cách đặc trưng của C#.
+
+> **Yêu cầu**: .NET 11 Preview 2 trở lên với C# 15 và bật tính năng preview (`<LangVersion>preview</LangVersion>`).
+
+### 18.1 Cú pháp khai báo
+
+Dùng từ khóa `union` để khai báo:
+
+```csharp
+public record class Cat(string Name);
+public record class Dog(string Name);
+public record class Bird(string Name);
+
+public union Pet(Cat, Dog, Bird);
+```
+
+`Pet` là một union type có thể chứa giá trị thuộc một trong ba kiểu: `Cat`, `Dog`, hoặc `Bird`.
+
+### 18.2 Gán giá trị & chuyển đổi ngầm định
+
+Mỗi kiểu thành viên (case type) có thể được chuyển đổi ngầm định (implicit conversion) sang union type:
+
+```csharp
+Pet pet  = new Dog("Rex");        // hợp lệ
+Pet pet2 = new Cat("Whiskers");   // hợp lệ
+// Pet pet3 = new Shark("Jaws"); // lỗi compile-time nếu Shark không thuộc union
+```
+
+### 18.3 Pattern matching & tính đầy đủ (exhaustiveness)
+
+Compiler biết tất cả các case của union, nên **bắt buộc** xử lý đủ mọi trường hợp trong `switch` mà không cần arm `_` / `default`:
+
+```csharp
+string name = pet switch
+{
+    Dog d  => d.Name,
+    Cat c  => c.Name,
+    Bird b => b.Name,
+};
+```
+
+Nếu thêm một case mới vào `Pet`, compiler sẽ cảnh báo tại tất cả `switch` chưa xử lý case đó.
+
+### 18.4 Đặc điểm nổi bật
+
+| Đặc điểm | Mô tả |
+|-----------|-------|
+| Không cần thừa kế chung | Các kiểu thành viên không cần có lớp cha hay interface chung. |
+| Tập đóng (closed set) | Không thể thêm case từ bên ngoài → tăng type safety. |
+| Nullable awareness | Nếu case types có nullable, compiler yêu cầu xử lý trường hợp `null`. |
+
+### 18.5 So sánh với các kỹ thuật trước đây
+
+Trước C# 15, để mô hình hóa một "loại có thể là A hoặc B", người ta thường dùng:
+- **Interface/abstract class**: đòi hỏi thừa kế, tập mở (open set), không có exhaustiveness.
+- **OneOf<T1,T2,...>** (thư viện bên thứ ba): tương tự về ý tưởng nhưng không tích hợp sâu vào ngôn ngữ.
+
+Union types C# 15 giải quyết các hạn chế đó với sự hỗ trợ trực tiếp từ compiler.
+

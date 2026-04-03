@@ -1366,3 +1366,34 @@ while (i < 10)
 
 ---
 
+## 78. `union`
+
+- **Loại:** reserved · **C#:** 15.0 (preview)  
+- **Mục đích:** Khai báo một **union type** — kiểu có thể chứa đúng một trong số các kiểu thành viên đã xác định (tập đóng). Xem chi tiết tại [Union types (C# 15)](typesystem.md#18-union-types-c-15).
+
+**Ví dụ:**
+
+```csharp
+public record class Cat(string Name);
+public record class Dog(string Name);
+public record class Bird(string Name);
+
+public union Pet(Cat, Dog, Bird);
+
+Pet pet = new Dog("Rex");  // implicit conversion
+
+string name = pet switch
+{
+    Dog d  => d.Name,
+    Cat c  => c.Name,
+    Bird b => b.Name,
+};
+```
+
+**Ghi chú:**  
+- Các kiểu thành viên được chuyển đổi ngầm định sang union type.  
+- Compiler bắt buộc xử lý đầy đủ tất cả các case trong `switch` (exhaustiveness).  
+- Yêu cầu .NET 11 Preview 2 trở lên và `<LangVersion>preview</LangVersion>`.
+
+---
+
