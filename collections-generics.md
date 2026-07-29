@@ -1,5 +1,7 @@
 # Collections & Generics
 
+> **Baseline:** .NET **10** / C# **14**. Collection expression arguments (`with(...)`) là **PREVIEW (C# 15 / .NET 11)**.
+
 ---
 
 ## Mục lục
@@ -19,14 +21,15 @@
   - [4. Collections đồng thời (thread-safe)](#4-collections-đồng-thời-thread-safe)
   - [5. Readonly \& View: `ReadOnlyCollection<T>`, `IReadOnlyList<T>`…](#5-readonly--view-readonlycollectiont-ireadonlylistt)
   - [6. Mảng \& các tiện ích hiệu năng: `Array`, `ArrayPool<T>`, `Span<T>`, `Memory<T>`](#6-mảng--các-tiện-ích-hiệu-năng-array-arraypoolt-spant-memoryt)
-  - [7. So sánh \& băm: `IEquatable<T>`, `IComparable<T>`, `IEqualityComparer<T>`…](#7-so-sánh--băm-iequatablet-icomparablet-iequalitycomparert)
-  - [8. Hiệu năng \& best practices khi dùng collections](#8-hiệu-năng--best-practices-khi-dùng-collections)
-  - [9. Generics nâng cao](#9-generics-nâng-cao)
-    - [9.1 Ràng buộc (`where`) \& mẫu thiết kế](#91-ràng-buộc-where--mẫu-thiết-kế)
-    - [9.2 Phương sai (variance): `out`/`in`](#92-phương-sai-variance-outin)
-    - [9.3 Generic math \& `static abstract` members](#93-generic-math--static-abstract-members)
-    - [9.4 Comparer/Equality custom cho collections](#94-comparerequality-custom-cho-collections)
-  - [10. Cheat sheet chọn cấu trúc dữ liệu](#10-cheat-sheet-chọn-cấu-trúc-dữ-liệu)
+  - [7. Collection expressions (C# 12+) \& args (C# 15 preview)](#7-collection-expressions-c-12--args-c-15-preview)
+  - [8. So sánh \& băm: `IEquatable<T>`, `IComparable<T>`, `IEqualityComparer<T>`…](#8-so-sánh--băm-iequatablet-icomparablet-iequalitycomparert)
+  - [9. Hiệu năng \& best practices khi dùng collections](#9-hiệu-năng--best-practices-khi-dùng-collections)
+  - [10. Generics nâng cao](#10-generics-nâng-cao)
+    - [10.1 Ràng buộc (`where`) \& mẫu thiết kế](#101-ràng-buộc-where--mẫu-thiết-kế)
+    - [10.2 Phương sai (variance): `out`/`in`](#102-phương-sai-variance-outin)
+    - [10.3 Generic math \& `static abstract` members](#103-generic-math--static-abstract-members)
+    - [10.4 Comparer/Equality custom cho collections](#104-comparerequality-custom-cho-collections)
+  - [11. Cheat sheet chọn cấu trúc dữ liệu](#11-cheat-sheet-chọn-cấu-trúc-dữ-liệu)
     - [Ví dụ tổng hợp](#ví-dụ-tổng-hợp)
 
 ---
@@ -216,11 +219,52 @@ finally
 - **`Span<T>` / `ReadOnlySpan<T>`** (byref-like): lát cắt không cấp phát; dùng với string (as `ReadOnlySpan<char>`), file I/O, parsing…  
 - **`Memory<T>` / `ReadOnlyMemory<T>`**: tương tự `Span` nhưng **lưu trữ được** (dùng cho async, field).
 
+> Chi tiết sâu (lifetime, `stackalloc`, unsafe, pitfalls): [memory-spans.md](memory-spans.md).
+
 **CollectionsMarshal** (nâng cao): `CollectionsMarshal.AsSpan(list)` để truy cập nội bộ `List<T>` *không an toàn phiên bản* → chỉ dùng khi hiểu rõ ràng buộc.
 
 ---
 
-## 7. So sánh & băm: `IEquatable<T>`, `IComparable<T>`, `IEqualityComparer<T>`…
+## 7. Collection expressions (C# 12+) & args (C# 15 preview)
+
+**C# 12** — cú pháp `[...]` tạo collection theo *target type* (thay `new List<int> { ... }` / `new[] { ... }` trong nhiều chỗ):
+
+```csharp
+int[] arr = [1, 2, 3];
+List<string> names = ["a", "b"];
+Span<int> slice = [1, 2, 3];
+int[] merged = [..arr, 4, 5]; // spread
+```
+
+- Compiler chọn constructor / `CollectionBuilder` / empty phù hợp với kiểu đích.  
+- Hỗ trợ spread `..` để nối sequence.  
+- Ưu tiên khi khởi tạo ngắn; vẫn dùng `new List<T>(capacity)` khi cần capacity tường minh (hoặc xem args preview bên dưới).
+
+### Collection expression arguments — **PREVIEW (C# 15 / .NET 11)**
+
+> **Chưa GA.** Cần `<LangVersion>preview</LangVersion>` trên toolchain C# 15. Cú pháp có thể tinh chỉnh trước GA.
+
+Truyền đối số constructor/factory qua phần tử `with(...)` **đứng đầu** collection expression:
+
+```csharp
+string[] values = ["one", "two", "three"];
+
+List<string> names = [with(capacity: values.Length * 2), ..values];
+
+HashSet<string> set = [with(StringComparer.OrdinalIgnoreCase), "Hello", "HELLO", "hello"];
+// OrdinalIgnoreCase → thường còn 1 phần tử
+```
+
+**Ràng buộc chính:**
+
+- `with(...)` phải là phần tử **đầu tiên**.  
+- Không dùng cho **array** / **span** targets.  
+- Arg không được `dynamic`.  
+- Với `[CollectionBuilder]`, args truyền vào factory **trước** `ReadOnlySpan<T>` phần tử.
+
+---
+
+## 8. So sánh & băm: `IEquatable<T>`, `IComparable<T>`, `IEqualityComparer<T>`…
 
 - **`IEquatable<T>`**: so sánh bằng nhau theo **giá trị** (tối ưu tránh boxing).  
 - **`IComparable<T>`**: thứ tự sắp xếp.  
@@ -243,7 +287,7 @@ var set = new HashSet<Person>(new PersonIdComparer());
 
 ---
 
-## 8. Hiệu năng & best practices khi dùng collections
+## 9. Hiệu năng & best practices khi dùng collections
 
 - **Chọn đúng cấu trúc** (xem *Cheat sheet*).  
 - **Capacity**: biết trước kích thước? set `Capacity`/`EnsureCapacity` (`List<T>`, `Dictionary<,>`).  
@@ -257,9 +301,9 @@ var set = new HashSet<Person>(new PersonIdComparer());
 
 ---
 
-## 9. Generics nâng cao
+## 10. Generics nâng cao
 
-### 9.1 Ràng buộc (`where`) & mẫu thiết kế
+### 10.1 Ràng buộc (`where`) & mẫu thiết kế
 
 ```csharp
 public T Create<T>() where T : new() => new T();
@@ -277,7 +321,7 @@ public interface IRepository<T> where T : class
 - Ràng buộc đặc biệt: `unmanaged`, `notnull`, `struct`, `class`, `new()`.  
 - **Ràng buộc nhiều**: `where T : SomeBase, ISvc, new()`.
 
-### 9.2 Phương sai (variance): `out`/`in`
+### 10.2 Phương sai (variance): `out`/`in`
 
 - **Covariant `out`**: cho **output-only**. Ví dụ `IEnumerable<out T>` → `IEnumerable<string>` nạp vào nơi cần `IEnumerable<object>`.
 - **Contravariant `in`**: cho **input-only**. Ví dụ `IComparer<in T>` có thể so sánh `object` cho `string`.
@@ -289,7 +333,7 @@ IEnumerable<object> oo = ss; // ok nhờ 'out T'
 
 > Không áp dụng cho class/struct generic, chỉ **interface/delegate**.
 
-### 9.3 Generic math & `static abstract` members
+### 10.3 Generic math & `static abstract` members
 
 Từ .NET 7/C# 11: interface có **`static abstract`** cho toán học tổng quát (`System.Numerics`):
 
@@ -306,7 +350,7 @@ T Sum<T>(IEnumerable<T> xs) where T : INumber<T>
 
 - Viết thuật toán số học generic **không cần** overloading thủ công từng kiểu.
 
-### 9.4 Comparer/Equality custom cho collections
+### 10.4 Comparer/Equality custom cho collections
 
 - `Dictionary<TKey,TValue>(IEqualityComparer<TKey>)`  
 - `SortedSet<T>(IComparer<T>)`
@@ -318,7 +362,7 @@ var setDesc = new SortedSet<int>(Comparer<int>.Create((a,b) => b.CompareTo(a)));
 
 ---
 
-## 10. Cheat sheet chọn cấu trúc dữ liệu
+## 11. Cheat sheet chọn cấu trúc dữ liệu
 
 | Bài toán | Gợi ý |
 |---|---|

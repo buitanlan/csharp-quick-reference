@@ -12,7 +12,7 @@
 4. [Multicast delegate & Invocation List](#4-multicast-delegate--invocation-list)  
 5. [Method group & overload resolution](#5-method-group--overload-resolution)  
 6. [Lambda expressions](#6-lambda-expressions)  
-   6.1 [Expression lambda vs Statement lambda](#61-expression-lambda-vs-statement-lambda) · 6.2 [Anonymous methods](#62-anonymous-methods) · 6.3 [Async lambda](#63-async-lambda)  
+   6.1 [Expression lambda vs Statement lambda](#61-expression-lambda-vs-statement-lambda) · 6.2 [Anonymous methods](#62-anonymous-methods) · 6.3 [Async lambda](#63-async-lambda) · 6.4 [Parameter modifiers không cần kiểu tường minh (C# 14)](#64-parameter-modifiers-không-cần-kiểu-tường-minh-c-14)  
 7. [Closure & Capturing](#7-closure--capturing)  
 8. [Variance trong delegate (`in`/`out`)](#8-variance-trong-delegate-inout)  
 9. [Ref/Out/In trong delegate & ref return](#9-refoutin-trong-delegate--ref-return)  
@@ -129,7 +129,8 @@ x => x * x              // suy kiểu
 
 > **C# 9**: *static lambda* — `static x => ...` không capture được biến ngoài.  
 > **C# 10**: *Lambda improvements* — **type tự nhiên** (natural type), có thể **chỉ định kiểu trả về** và **gán attribute** cho lambda.  
-> **C# 12**: hỗ trợ **default parameter** cho lambda (phiên bản mới).
+> **C# 12**: hỗ trợ **default parameter** cho lambda.  
+> **C# 14**: **modifier** (`ref`/`in`/`out`/`ref readonly`/`scoped`) trên tham số lambda **không** bắt buộc ghi kiểu tường minh — xem [§6.4](#64-parameter-modifiers-không-cần-kiểu-tường-minh-c-14).
 
 ### 6.1 Expression lambda vs Statement lambda
 
@@ -153,6 +154,50 @@ delegate(int x) { return x * x; }
 ```csharp
 Func<Task<int>> f = async () => { await Task.Delay(10); return 42; };
 ```
+
+### 6.4 Parameter modifiers không cần kiểu tường minh (C# 14)
+
+Trước C# 14, nếu tham số lambda có modifier (`ref`, `out`, `in`, `ref readonly`, `scoped`) thì **bắt buộc** khai báo kiểu đầy đủ. C# 14 cho phép **suy kiểu** từ delegate đích:
+
+```csharp
+delegate bool TryParse<T>(string text, out T result);
+
+// C# 14 — không cần ghi string / int
+TryParse<int> parse1 = (text, out result) => int.TryParse(text, out result);
+
+// Trước C# 14 — bắt buộc kiểu tường minh khi có modifier
+TryParse<int> parse2 = (string text, out int result) => int.TryParse(text, out result);
+```
+
+Các modifier được hỗ trợ theo kiểu này: `ref`, `in`, `out`, `ref readonly`, `scoped`.
+
+```csharp
+delegate void Update(ref int value);
+Update bump = (ref x) => x++;           // C# 14
+
+delegate void ReadOnlyView(in Matrix4x4 m);
+ReadOnlyView use = (in m) => { /* ... */ };
+```
+
+**Ngoại lệ:** modifier **`params`** trên lambda vẫn yêu cầu **danh sách tham số typed tường minh** (không suy kiểu được như trên).
+
+Kết hợp ghi chú phiên bản trước:
+
+```csharp
+// C# 10 — natural type + return type
+var square = int (int x) => x * x;
+
+// C# 10 — attribute trên lambda / tham số
+Handler h = [Obsolete] (int x) => x;
+
+// C# 12 — default parameter
+var greet = (string name = "world") => $"Hello, {name}";
+
+// C# 14 — modifier + suy kiểu
+TryParse<double> parseD = (text, out result) => double.TryParse(text, out result);
+```
+
+Chi tiết `ref`/`out`/`in` trên method: [methods.md](./methods.md). Delegate với `ref` return: [§9](#9-refoutin-trong-delegate--ref-return).
 
 ---
 
@@ -197,7 +242,8 @@ public delegate void Consumer<in T>(T item);             // contravariant tham s
 
 ## 9. Ref/Out/In trong delegate & ref return
 
-- Delegate có thể nhận **`ref`/`out`/`in`** parameters, nhưng phải **khớp đúng** ở method gán vào.  
+- Delegate có thể nhận **`ref`/`out`/`in`** parameters, nhưng phải **khớp đúng** ở method/lambda gán vào.  
+- **C# 14:** lambda có thể ghi `(text, out result) => ...` **không** cần kiểu tường minh nếu delegate đích đã biết kiểu — xem [§6.4](#64-parameter-modifiers-không-cần-kiểu-tường-minh-c-14).  
 - Delegate có thể **trả về `ref`**:
 
 ```csharp

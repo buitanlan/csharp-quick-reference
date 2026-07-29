@@ -21,6 +21,9 @@
   - [12. Range \& Index: `..`, `^`](#12-range--index--)
   - [13. Toán tử ngữ nghĩa đặc biệt](#13-toán-tử-ngữ-nghĩa-đặc-biệt)
   - [14. Operator overloading](#14-operator-overloading)
+    - [14.1 Overload cổ điển (`static`)](#141-overload-cổ-điển-static)
+    - [14.2 User-defined compound assignment (C\# 14)](#142-user-defined-compound-assignment-c-14)
+    - [14.3 Instance `++`/`--` (C\# 14)](#143-instance----c-14)
   - [15. User-defined conversions `implicit`/`explicit`](#15-user-defined-conversions-implicitexplicit)
   - [16. Lifted operators \& nullable](#16-lifted-operators--nullable)
   - [17. Unsafe/pointer operators: `*` `&` `->` `[]` `fixed`](#17-unsafepointer-operators------fixed)
@@ -94,6 +97,8 @@ int b = x++; // x=3, b=2
 
 Tránh dùng trong biểu thức phức tạp gây khó đọc.
 
+**Overload:** từ trước có `static` `operator ++`/`--` (trả instance mới). **C# 14** thêm **instance** `void operator ++()` / `--()` để mutate in-place — xem [§14.3](#143-instance----c-14).
+
 ---
 
 ## 5. So sánh & bằng/khác
@@ -148,7 +153,9 @@ x += 2; // x = x + 2
 dict[key] ??= new List<int>(); // khởi tạo nếu null
 ```
 
-Gán hợp được “nâng” để bảo toàn semantics với indexer/phép truy cập phức tạp.
+Gán hợp được “nâng” để bảo toàn semantics với indexer/phép truy cập phức tạp (đánh giá LHS một lần).
+
+**C# 14:** type có thể khai báo **user-defined** `+=`, `-=`, … dạng instance `void operator +=(T rhs)` để **mutate in-place** thay vì `x = x + y` (tránh tạm / cấp phát). Chi tiết [§14.2](#142-user-defined-compound-assignment-c-14).
 
 ---
 
@@ -176,7 +183,10 @@ obj!.Property // null-forgiving: cam kết với compiler là không null (cẩn
 
 - `??` và `??=` chỉ kiểm `== null`.  
 - `?.` trả **null** nếu vế trái null, không ném NRE. Chuỗi `a?.B?.C` rất hữu dụng cho truy cập sâu.
-- Từ C# 14, `?.` có thể dùng trong phép gán (Null-conditional assignment)
+
+### Null-conditional assignment (C# 14)
+
+`?.` và `?[]` dùng được ở **vế trái** của gán / gán hợp. Vế phải **chỉ** đánh giá khi receiver **không** null.
 
 ```csharp
 // trước C# 14
@@ -185,9 +195,20 @@ if (customer is not null)
     customer.Order = GetCurrentOrder();
 }
 
-// từ C# 14
+// C# 14
 customer?.Order = GetCurrentOrder();
+// nếu customer == null → không gọi GetCurrentOrder(), không gán
 ```
+
+Compound assignment cũng được:
+
+```csharp
+customer?.Score += 10;
+buffer?[i] = value;
+list?[index] += delta;
+```
+
+**Không** áp dụng cho `++` / `--` dạng null-conditional (`customer?.Count++` — không hợp lệ).
 
 ---
 
@@ -252,30 +273,36 @@ var t = typeof(List<string>);    // System.Type
 Span<byte> buf = stackalloc byte[256]; // stack buffer
 ```
 
-> Từ C# 14 ta có thể dùng nameof với các kiểu generic mở
+### `nameof` với unbound generics (C# 14)
+
+Trước C# 14 chỉ dùng được **closed** generic (`List<int>`). Từ C# 14, `nameof` nhận **unbound** generic type:
 
 ```csharp
 Console.WriteLine(nameof(List<>));          // "List"
 Console.WriteLine(nameof(Dictionary<,>));   // "Dictionary"
+Console.WriteLine(nameof(Nullable<>));      // "Nullable"
 ```
+
+Hữu ích cho logging/diagnostics/source-gen khi không muốn (hoặc không thể) chọn type argument cụ thể. `typeof(List<>)` vẫn khác — trả `Type` mở; `nameof` chỉ là **chuỗi tên**.
 
 ---
 
 ## 14. Operator overloading
 
+### 14.1 Overload cổ điển (`static`)
+
 - Cho phép định nghĩa lại nghĩa của toán tử trên **class/struct** (không phải interface).  
 - Khai báo `public static <ret> operator +(T a, T b) { ... }`.
 
 **Overload được** (tiêu biểu): `+ - ! ~ ++ -- true false * / % & | ^ << >> == != < > <= >=`  
-**Không overload được**: `=` `&&` `||` `?:` `??` `?.` `?[]` `=>` `.` `[]` `()` v.v.
+**C# 14 thêm:** compound `+=` `-=` … và instance `++`/`--` (xem dưới).  
+**Không overload được:** `=` `&&` `||` `?:` `??` `?.` `?[]` `=>` `.` `[]` `()` v.v.
 
 Quy tắc quan trọng:
 
 - Nếu overload `==` → nên override `Equals`/`GetHashCode` và overload `!=`.  
 - `true`/`false` giúp type dùng trong `if`, kết hợp với `&`/`|`.  
 - Tôn trọng kỳ vọng của người dùng (tính giao hoán/bất biến).
-
-Ví dụ:
 
 ```csharp
 public readonly struct Vector2(double x, double y)
@@ -293,6 +320,71 @@ public readonly struct Vector2(double x, double y)
     public override int GetHashCode() => HashCode.Combine(X, Y);
 }
 ```
+
+Extension operators (khai báo trong `extension` block): xem [oop.md §8](./oop.md#8-extension-members-c-14).
+
+### 14.2 User-defined compound assignment (C# 14)
+
+Mặc định `x += y` ≈ `x = x + y` (có thể cấp phát/copy). C# 14 cho phép **instance** operator `void`, mutate `this`:
+
+```csharp
+public class GateAttendance
+{
+    public string GateId { get; }
+    public int Count { get; private set; }
+
+    public GateAttendance(string gateId, int count = 0)
+    {
+        GateId = gateId;
+        Count = count;
+    }
+
+    // Vẫn có thể giữ static + làm fallback khi không dùng được instance op
+    public static GateAttendance operator +(GateAttendance g, int n)
+        => new(g.GateId, g.Count + n);
+
+    // C# 14: in-place
+    public void operator +=(int partySize) => Count += partySize;
+}
+
+var gate = new GateAttendance("A");
+gate += 5;   // gọi void operator += — không tạo instance mới
+gate += 3;
+```
+
+Luật nhanh:
+
+- `public`, **không** `static`, trả **`void`**, **một** tham số (vế phải).  
+- Khi LHS là **biến** và có compound op phù hợp → ưu tiên instance op; không có thì fallback `x = x op y`.  
+- Phù hợp buffer lớn, tensor, counter mutable — **không** hợp kiểu thiết kế hoàn toàn immutable (trừ khi chấp nhận đổi mô hình).
+
+### 14.3 Instance `++`/`--` (C# 14)
+
+```csharp
+public class Counter
+{
+    public int Value { get; private set; }
+
+    // Classic static: luôn trả instance mới
+    public static Counter operator ++(Counter c)
+        => new() { Value = c.Value + 1 };
+
+    // C# 14 instance: mutate in-place
+    public void operator ++() => Value++;
+    public void operator --() => Value--;
+}
+
+var c = new Counter();
+++c;   // ưu tiên instance void operator ++ khi c là biến
+c++;   // compiler vẫn dùng instance op khi hợp lệ; giá trị biểu thức = Value trước tăng
+```
+
+Luật nhanh:
+
+- Instance: `public void operator ++()` / `--()` — **không** tham số, **không** `static`.  
+- Prefix trên biến → ưu tiên instance; nếu không phải biến / không có instance op → dùng static unary.  
+- Một khai báo instance phục vụ cả prefix và postfix (compiler lấy giá trị trước/sau tùy ngữ cảnh).  
+- Reference type: instance op trên `null` → `NullReferenceException`.
 
 ---
 
@@ -361,8 +453,9 @@ unsafe
 3. **So sánh chuỗi**: rõ ràng `StringComparison`/`StringComparer` thay vì mặc định.  
 4. **Nullable**: tận dụng `?.` + `??` để tránh NRE; tránh lạm dụng `!` (null-forgiving).  
 5. **Overflow**: trong tính toán tài chính, dùng `decimal`; bật `checked` khi cần chính xác.  
-6. **Overload toán tử**: nhất quán với trực giác; luôn đi đôi `==`/`!=`; không phá vỡ luật toán học (ví dụ `a + b` = `b + a` nếu kỳ vọng).  
+6. **Overload toán tử**: nhất quán với trực giác; luôn đi đôi `==`/`!=`; không phá vỡ luật toán học (ví dụ `a + b` = `b + a` nếu kỳ vọng). Compound/`++` instance (C# 14) khi cần hiệu năng in-place — đừng trộn mơ hồ với API immutable.  
 7. **Shift mới `>>>`**: đảm bảo target .NET/C# hỗ trợ (C# 11+).  
 8. **Range/Index**: coi chừng `IndexOutOfRangeException`; nhớ `end` là **exclusive**.  
 9. **`as` vs cast**: dùng `as` khi chấp nhận `null`; cast khi chắc chắn đúng (hoặc muốn ném lỗi).  
-10. **IQueryable**: một số toán tử ở LINQ có semantics khác (dịch SQL) — xem chương LINQ.
+10. **IQueryable**: một số toán tử ở LINQ có semantics khác (dịch SQL) — xem chương LINQ.  
+11. **Null-conditional assignment**: nhớ vế phải không chạy khi receiver null — side-effect trong RHS có thể “biến mất”.

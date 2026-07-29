@@ -1,8 +1,7 @@
 # Tham số của hàm Main
 
-Hàm Main có thể nhận vào tham số dưới dạng một `string[]`. Tham số này *luôn luôn* khác `null`, 
-bạn có thể dùng args.Length != 0 một cách an toàn để kiểm tra xem có tham số nào được truyền khi chương trình
-chạy hay không.
+> **Đã gộp** vào [main-function.md](../main-function.md) §5.
 
-Trong trường hợp không dùng tham số `string[] args`, bạn vẫn có thể lấy giá trị của chúng thông qua
-Environment.CommandLine hoặc Environment.GetCommandLineArgs.
+`Main` / top-level statements nhận `string[] args` — **không bao giờ `null`**. Khi không khai báo tham số, vẫn lấy dòng lệnh qua `Environment.GetCommandLineArgs()` / `Environment.CommandLine` (lưu ý: `GetCommandLineArgs()[0]` là đường dẫn executable, khác `args[0]`).
+
+Chi tiết so sánh API, `dotnet run -- …`, và gợi ý parse (`System.CommandLine`, …): xem trang chính §5.

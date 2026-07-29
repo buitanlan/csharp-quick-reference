@@ -17,7 +17,7 @@ Trong C#, **phương thức (method)** là đơn vị cơ bản để đóng gó
 9. [`ref readonly`](#9-ref-readonly)
 10. [`in`](#10-in)
 11. [`params`](#11-params)
-12. [`this` và extension method](#12-this-và-extension-method)
+12. [`this` và extension method / extension members](#12-this-và-extension-method--extension-members)
 13. [Iterator method – `yield return` / `yield break`](#13-iterator-method--yield-return--yield-break)
 14. [Tài liệu liên quan](#14-tài-liệu-liên-quan)
 
@@ -260,13 +260,25 @@ unsafe
 
 Các **parameter modifier** quyết định **cách truyền** tham số:
 
+| Modifier | Đọc | Ghi | Biến caller phải gán trước? | Method bắt buộc gán? | Ghi chú |
+|----------|-----|-----|-----------------------------|----------------------|---------|
+| *(không)* | ✅ (copy) | chỉ local | — | — | by value (value type copy / ref copy) |
+| `ref` | ✅ | ✅ | **Có** | Không | alias đọc/ghi |
+| `out` | sau khi gán | ✅ | Không | **Có** (mọi path) | output / `TryXxx` |
+| `in` | ✅ | ❌ | Có (hoặc temporary) | Không | by-ref readonly (tham số) |
+| `ref readonly` | ✅ | ❌ | Có | Không | thường cho **ref return/local**; tham số dùng `in` phổ biến hơn |
+| `params` | ✅ | — | — | — | varargs; C# 13+: nhiều kiểu collection |
+| `this` | — | — | — | — | chỉ tham số đầu — classic extension method |
+
 - `ref` – truyền tham chiếu **đọc/ghi**.
 - `out` – truyền tham chiếu, dành cho **giá trị đầu ra**.
 - `in` – truyền tham chiếu **chỉ-đọc** (readonly by-ref).
 - `params` – tham số “danh sách” (varargs).
-- `this` – dùng để khai báo **extension method**.
+- `this` – dùng để khai báo **extension method** (classic).
 
 Trong các mục sau, ta sẽ đi chi tiết từng modifier quan trọng.
+
+> **Lambda:** modifier `ref`/`in`/`out`/`ref readonly` trên lambda — xem [delegates-lambdas.md](./delegates-lambdas.md) (C# 14 cho phép không ghi kiểu tường minh).
 
 ---
 
@@ -456,9 +468,9 @@ Lưu ý:
 
 ## 11. `params`
 
-`params` cho phép truyền **0, 1 hoặc nhiều đối số** vào một tham số dạng mảng.
+`params` cho phép truyền **0, 1 hoặc nhiều đối số** vào một tham số “danh sách”.
 
-Khai báo:
+### 11.1 `params` với mảng (classic)
 
 ```csharp
 void Log(params string[] messages)
@@ -466,11 +478,7 @@ void Log(params string[] messages)
     foreach (var message in messages)
         Console.WriteLine(message);
 }
-```
 
-Gọi:
-
-```csharp
 Log("A");
 Log("A", "B", "C");
 Log(); // messages.Length == 0
@@ -483,24 +491,66 @@ Quy tắc:
 
 - `params` **phải là tham số cuối cùng** trong danh sách.
 - Mỗi method chỉ có **tối đa một** tham số `params`.
-- Ở runtime, đây đơn giản là một mảng (`string[]`).
+- Trước C# 13: kiểu phải là **mảng một chiều** (`T[]`).
 
-Cẩn thận:
+### 11.2 `params` collections (C# 13+)
 
-- Mỗi lần gọi có thể tạo mảng mới (nếu không truyền sẵn mảng) → chú ý trong code nhạy hiệu năng.
-- Overload với và không `params` có thể gây nhầm lẫn; compiler chọn overload theo luật riêng.
+Từ **C# 13**, `params` chấp nhận nhiều kiểu “collection-like”, không chỉ `T[]`:
+
+- `Span<T>`, `ReadOnlySpan<T>`
+- `IEnumerable<T>`, `ICollection<T>`, `IList<T>`, `IReadOnlyCollection<T>`, `IReadOnlyList<T>`, …
+- Kiểu có create method tương thích **collection expression** (cùng attribute như collection expressions)
+- Struct/class implement `IEnumerable<T>` với ctor không tham số + `Add(T)` instance
+
+```csharp
+void Sum(params ReadOnlySpan<int> values)
+{
+    var total = 0;
+    foreach (var v in values)
+        total += v;
+    Console.WriteLine(total);
+}
+
+Sum(1, 2, 3);           // không bắt buộc cấp phát int[]
+Sum([10, 20, 30]);      // collection expression (C# 12+)
+
+void WriteAll(params IEnumerable<string> lines)
+{
+    foreach (var line in lines)
+        Console.WriteLine(line);
+}
+
+WriteAll("a", "b");
+WriteAll(new List<string> { "x", "y" });
+```
+
+**Hiệu năng:**
+
+- `params T[]` / nhiều collection tạo instance mới khi truyền từng đối số rời → tránh trong hot-path.
+- `params ReadOnlySpan<T>` / `params Span<T>` giúp **tránh cấp phát** khi compiler có thể stackalloc / truyền span từ mảng sẵn có.
+- Overload với và không `params` có thể gây nhầm; compiler chọn theo luật overload riêng.
+
+```csharp
+// Ưu tiên span khi API nhạy hiệu năng
+public static bool AllPositive(params ReadOnlySpan<int> xs)
+{
+    foreach (var x in xs)
+        if (x <= 0) return false;
+    return true;
+}
+```
 
 ---
 
-## 12. `this` và extension method
+## 12. `this` và extension method / extension members
 
-### 12.1 `this` trong tham số đầu tiên
+### 12.1 Classic: `this` trên tham số đầu (C# 3+)
 
-`this` trong tham số đầu tiên của một **static method** cho phép khai báo **extension method** – cách “gắn thêm” method cho type đã tồn tại mà không sửa code type đó.
+`this` trong tham số đầu tiên của một **static method** cho phép khai báo **extension method** — “gắn thêm” method cho type đã tồn tại mà không sửa code type đó.
 
 Quy tắc:
 
-- Method phải trong **static class**.
+- Method phải trong **static class** (top-level).
 - Method phải **static**.
 - Tham số đầu tiên: `this SomeType value`.
 
@@ -544,11 +594,45 @@ StringExtensions.IsNullOrEmpty(name);
 StringExtensions.ToSlug(title);
 ```
 
-### 12.3 Lưu ý khi thiết kế extension method
+### 12.3 Extension members — khối `extension` (C# 14)
+
+C# 14 thêm cú pháp **`extension` block** trong static class: ngoài method, còn **extension property**, **static extension**, **operator**. Classic `this` và `extension` block **cùng IL / tương thích** — caller không phân biệt.
+
+```csharp
+public static class EnumerableExt
+{
+    extension<T>(IEnumerable<T> source)
+    {
+        public bool IsEmpty => !source.Any();
+
+        public T? FirstOrNull() => source.FirstOrDefault();
+    }
+
+    extension<T>(IEnumerable<T>)
+    {
+        public static IEnumerable<T> Empty => Enumerable.Empty<T>();
+    }
+}
+
+var xs = new[] { 1, 2 };
+_ = xs.IsEmpty;
+_ = IEnumerable<int>.Empty;
+```
+
+Chi tiết OOP (so sánh, generic block, pitfalls): [oop.md — §8 Extension members](./oop.md#8-extension-members-c-14).
+
+> **C# 15 Preview:** extension **indexer** trong `extension` block — *preview*, chưa GA.
+
+### 12.4 Lưu ý khi thiết kế extension
 
 - Không phá vỡ tính bất biến của type (đặc biệt `string` immutable).
-- Tránh behavior bất ngờ, khó đoán.
-- Quan tâm tới namespace để tránh xung đột tên và overload không mong muốn.
+- Tránh behavior bất ngờ; member của type gốc **luôn thắng** extension cùng chữ ký.
+- Quan tâm namespace để tránh xung đột tên và overload không mong muốn.
+- Prefer `extension` block khi cần **property / static / operator**; giữ classic `this` cho method đơn giản hoặc codebase cũ.
+
+### 12.5 Lambda (chỉ dẫn hướng)
+
+Method nhận `Func`/`Action`/delegate tùy chỉnh — lambda là cách viết ngắn. Modifier tham số trên lambda (`ref`/`out`/…): xem [delegates-lambdas.md](./delegates-lambdas.md), không lặp sâu tại đây.
 
 ---
 
@@ -733,4 +817,7 @@ Khi `foreach` kết thúc (dù bình thường hay exception), enumerator đư�
 
 ## 14. Tài liệu liên quan
 
+- **OOP / extension members**: [oop.md — §8](./oop.md#8-extension-members-c-14) — *khối `extension`, property/static/operator.*
+- **Delegate & Lambda**: [delegates-lambdas.md](./delegates-lambdas.md) — *callback, closure, modifier trên lambda (C# 14).*
 - **Chương bất đồng bộ**: [async.md](./async.md) — *async/await, Task/ValueTask, exception/cancellation trong async, và async streams (`IAsyncEnumerable<T>`, `await foreach`).*
+- **Toán tử**: [operators.md](./operators.md) — *compound assignment / instance `++` (C# 14).*

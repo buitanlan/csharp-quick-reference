@@ -1,5 +1,7 @@
 # Hệ thống kiểu dữ liệu (Common Type Sytem)
 
+> **Baseline:** .NET **10** / C# **14**. Mục [18. Union types](#18-union-types-c-15-preview) là **PREVIEW (.NET 11 / C# 15)** — chưa GA.
+
 C# là một ngôn ngữ `strongly typed`, có nghĩa là các kiểu dữ liệu được sử dụng rất chặt chẽ, và bạn luôn phải 
 xác định kiểu cụ thể của một biến, hằng hoặc biểu thức. Vì C# là ngôn ngữ được thiết kế cho .NET nên nó hỗ trợ 
 đầy đủ hệ thống kiểu trong .NET, bao gồm các kiểu dữ liệu primitive và cả một tập rất lớn các kiểu phức tạp được
@@ -53,7 +55,7 @@ sẽ dùng các thông tin này để đảm bảo an toàn kiểu khi nó cấp
     - [15.3 Pattern matching](#153-pattern-matching)
   - [16. Unsafe \& unmanaged types (overview), function pointers](#16-unsafe--unmanaged-types-overview-function-pointers)
   - [17. Sơ đồ “type tree” (ASCII)](#17-sơ-đồ-type-tree-ascii)
-  - [18. Union types (C# 15)](#18-union-types-c-15)
+  - [18. Union types (C# 15) — **PREVIEW**](#18-union-types-c-15-preview)
 
 ---
 
@@ -403,11 +405,12 @@ object
 
 ---
 
-## 18. Union types (C# 15)
+## 18. Union types (C# 15) — PREVIEW
 
-C# 15 giới thiệu **union types** — một tính năng được mong đợi lâu dài, cho phép khai báo một kiểu có thể là đúng một trong số các kiểu đã xác định từ trước (tập đóng). Tính năng này tương tự *discriminated unions* trong F# hoặc *union types* trong TypeScript, nhưng theo phong cách đặc trưng của C#.
+> **PREVIEW (.NET 11 / C# 15)** — chưa phải baseline .NET 10 / C# 14.  
+> Yêu cầu: .NET 11 Preview (hoặc tương đương) + `<LangVersion>preview</LangVersion>`. Cú pháp/semantics có thể đổi trước GA.
 
-> **Yêu cầu**: .NET 11 Preview 2 trở lên với C# 15 và bật tính năng preview (`<LangVersion>preview</LangVersion>`).
+C# 15 giới thiệu **union types** — kiểu có thể là đúng một trong số các kiểu thành viên đã xác định (tập đóng). Tương tự *discriminated unions* (F#) / *union types* (TypeScript), theo phong cách C#.
 
 ### 18.1 Cú pháp khai báo
 
@@ -462,5 +465,5 @@ Trước C# 15, để mô hình hóa một "loại có thể là A hoặc B", ng
 - **Interface/abstract class**: đòi hỏi thừa kế, tập mở (open set), không có exhaustiveness.
 - **OneOf<T1,T2,...>** (thư viện bên thứ ba): tương tự về ý tưởng nhưng không tích hợp sâu vào ngôn ngữ.
 
-Union types C# 15 giải quyết các hạn chế đó với sự hỗ trợ trực tiếp từ compiler.
+Union types C# 15 (preview) giải quyết các hạn chế đó với sự hỗ trợ trực tiếp từ compiler — chỉ dùng trên toolchain preview, không phụ thuộc vào baseline .NET 10.
 

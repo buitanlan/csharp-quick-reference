@@ -1,13 +1,15 @@
 # Lập trình bất đồng bộ trong C#  
 *(async/await, Task, async streams)*
 
-Chương này tập trung vào **lập trình bất đồng bộ (asynchronous)** trong C# 5.0 (.NET 4.5):
+> **Baseline:** .NET **10** / C# **14**. Thread / Channels đồng bộ thấp hơn → [threading.md](threading.md).
+
+Chương này tập trung vào **lập trình bất đồng bộ (asynchronous)**:
 
 - `async` / `await` và cơ chế state machine bên dưới,
 - Các kiểu trả về: `Task`, `Task<T>`, `ValueTask`, `ValueTask<T>`, `async void`,
 - Cancellation, progress, exception trong async,
-- **Async streams**: `IAsyncEnumerable<T>` và `await foreach`.
-
+- **Async streams**: `IAsyncEnumerable<T>` và `await foreach`,
+- Timer / delay patterns (`Task.Delay`, `PeriodicTimer`), Channel + async.
 ---
 
 ## Mục lục
@@ -28,7 +30,8 @@ Chương này tập trung vào **lập trình bất đồng bộ (asynchronous)*
     - [7.2 Khi không `await` Task](#72-khi-không-await-task)
   - [8. Cancellation \& IProgress](#8-cancellation--iprogress)
     - [8.1 CancellationToken](#81-cancellationtoken)
-    - [8.2 Báo tiến độ với `IProgress<T>`](#82-báo-tiến-độ-với-iprogresst)
+    - [8.2 Best practices CancellationToken](#82-best-practices-cancellationtoken)
+    - [8.3 Báo tiến độ với `IProgress<T>`](#83-báo-tiến-độ-với-iprogresst)
   - [9. Best practices khi dùng async/await](#9-best-practices-khi-dùng-asyncawait)
   - [10. Async streams – `IAsyncEnumerable<T>` \& `await foreach`](#10-async-streams--iasyncenumerablet--await-foreach)
     - [10.1 Vấn đề trước khi có async streams](#101-vấn-đề-trước-khi-có-async-streams)
@@ -41,6 +44,8 @@ Chương này tập trung vào **lập trình bất đồng bộ (asynchronous)*
       - [Pattern 2: Truyền `CancellationToken` bình thường](#pattern-2-truyền-cancellationtoken-bình-thường)
     - [11.2 Exception \& dispose](#112-exception--dispose)
     - [11.3 So sánh \& best practices](#113-so-sánh--best-practices)
+  - [12. Channel + async](#12-channel--async)
+  - [13. `PeriodicTimer` / `Task.Delay`](#13-periodictimer--taskdelay)
 
 ---
 
@@ -174,18 +179,13 @@ int result = await CalculateAsync();
 
 ### 3.2 `ValueTask` / `ValueTask<T>`
 
-Tối ưu cho trường hợp:
-
-- **Đôi khi** kết quả đã có sẵn (sync), không cần tạo `Task` mới,
-- Một số API performance-critical dùng `ValueTask<T>` để giảm GC.
-
-Ví dụ:
+Tối ưu khi kết quả **thường đã sẵn** (cache hit / sync path) và muốn tránh cấp phát `Task`:
 
 ```csharp
 public async ValueTask<int> GetCachedOrComputeAsync()
 {
     if (TryGetFromCache(out var value))
-        return value; // sync, không cần Task
+        return value; // sync, không allocate Task
 
     int computed = await ComputeAsync();
     SaveToCache(computed);
@@ -193,10 +193,26 @@ public async ValueTask<int> GetCachedOrComputeAsync()
 }
 ```
 
-Nhược điểm:
+**Khi nên dùng:**
 
-- Không nên cache `ValueTask` hoặc `await` nó nhiều lần,
-- API phức tạp hơn → chỉ dùng khi thật sự có lý do hiệu năng.
+- Hot path, tỷ lệ hoàn thành đồng bộ cao, đo được áp lực GC từ `Task`.
+- Implement interface/`IValueTaskSource` trong thư viện hạ tầng (Channel reader, pipeline…).
+
+**Khi không nên:**
+
+- API ứng dụng thông thường → `Task`/`Task<T>` đơn giản, dễ compose.
+- Cần `await` **nhiều lần**, lưu vào field, hoặc `Task.WhenAll` trực tiếp trên nhiều `ValueTask` (phải `.AsTask()` khi cần).
+
+```csharp
+ValueTask<int> vt = GetCachedOrComputeAsync();
+int a = await vt;
+// int b = await vt; // SAI — không await ValueTask đã consume
+
+ValueTask<int> vt2 = GetCachedOrComputeAsync();
+Task<int> asTask = vt2.AsTask(); // khi cần API Task-based
+```
+
+Nhược điểm: API phức tạp hơn, dễ dùng sai → **chỉ dùng khi có lý do hiệu năng đo được**.
 
 ### 3.3 `async void` – trường hợp đặc biệt
 
@@ -362,13 +378,16 @@ Mặc định:
 var data = await client.GetStringAsync(url).ConfigureAwait(false);
 ```
 
-- Thích hợp trong **library**, background code, nơi không phụ thuộc UI thread.
-- Giúp giảm overhead, tránh deadlock trong một số pattern block không tốt.
+### Library vs app (.NET Core / .NET 5+)
 
-**Gợi ý dùng:**
+| Ngữ cảnh | SyncContext điển hình | Gợi ý |
+|---|---|---|
+| **Class library / SDK** | Không biết host | Nên `ConfigureAwait(false)` hầu hết chỗ — tránh buộc continuation về UI/legacy context của caller |
+| **ASP.NET Core** | Thường **không** có SyncContext tùy biến | `ConfigureAwait(false)` ít khác biệt hành vi; vẫn hữu ích nếu library được gọi từ UI host |
+| **Console / Worker / Minimal API** | Thường không | Mặc định `await` thường ổn |
+| **WPF / WinForms / MAUI** | Có UI SyncContext | App code: thường **không** `false` sau await nếu cần đụng UI; library thuần: `false` |
 
-- Trong **application/UI**: có thể không dùng `ConfigureAwait(false)` để code đơn giản (trừ khi bạn hiểu rõ dòng chảy context).
-- Trong **library** (class library, SDK): nên `await xxx.ConfigureAwait(false)` hầu hết chỗ.
+**Tóm lại:** trên .NET hiện đại (Core+), “bắt buộc ConfigureAwait everywhere trong app” **không còn** là quy tắc vàng như thời ASP.NET Framework; vẫn **nên** dùng trong **thư viện** tái sử dụng. Xem thêm [threading.md — SynchronizationContext](threading.md#9-synchronizationcontext--configureawait).
 
 ---
 
@@ -446,7 +465,24 @@ catch (OperationCanceledException)
 }
 ```
 
-### 8.2 Báo tiến độ với `IProgress<T>`
+### 8.2 Best practices CancellationToken
+
+1. **Truyền token xuống mọi API hỗ trợ** (`HttpClient`, EF, `ReadAsync`, `Task.Delay`, Channel…).
+2. **Không nuốt** `OperationCanceledException` trừ khi bạn cố ý chuyển thành kết quả “không lỗi” ở biên app.
+3. Phân biệt: cancel theo yêu cầu user/host → `OperationCanceledException` / `TaskCanceledException`; lỗi thật → exception khác.
+4. `CancellationTokenSource` — `using` / dispose đúng; cân nhắc `CancelAfter(TimeSpan)` cho timeout.
+5. Liên kết nhiều nguồn: `CancellationTokenSource.CreateLinkedTokenSource(userCt, shutdownCt)`.
+6. Kiểm tra hợp tác trong vòng lặp CPU: `ThrowIfCancellationRequested()` định kỳ (không chỉ dựa vào một `Delay`).
+7. Sau khi cancel, **không** tiếp tục dùng resource nửa vời — cleanup trong `finally` / `await using`.
+8. Default parameter `CancellationToken cancellationToken = default` ở public API async là convention tốt.
+
+```csharp
+await using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+using var linked = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, hostCt);
+await DoWorkAsync(linked.Token);
+```
+
+### 8.3 Báo tiến độ với `IProgress<T>`
 
 ```csharp
 public async Task DownloadWithProgressAsync(IProgress<int> progress)
@@ -493,10 +529,13 @@ await DownloadWithProgressAsync(progress);
    - Dùng method `GetXxxAsync()` thay vì `async` property.
 
 6. **Trong library: dùng `ConfigureAwait(false)`**  
-   - Làm code độc lập môi trường (UI/Console/Web…), ít lỗi hơn.
+   - App .NET Core+: thường không bắt buộc mọi chỗ; xem mục 6.
 
 7. **Đặt tên method rõ ràng**  
    - Convention: method async đặt hậu tố `Async`: `GetUserAsync`, `SaveAsync`.
+
+8. **Không `lock` quanh `await`**  
+   - Giữ critical section ngắn; dùng `SemaphoreSlim.WaitAsync` nếu cần giới hạn đồng thời qua await.
 
 ---
 
@@ -691,3 +730,75 @@ Chọn async stream khi:
 4. Đảm bảo cleanup: `using` / `await using` + `finally`.
 5. Không dùng async stream khi thực chất bạn luôn cần “lấy hết rồi xử lý” → dùng `Task<List<T>>` là đủ.
 6. Không lạm dụng trong logic thuần CPU sync.
+
+---
+
+## 12. Channel + async
+
+`System.Threading.Channels` là hàng đợi **async-native**: producer/consumer không chiếm thread khi chờ. Mẫu đầy đủ hơn → [threading.md — Channels](threading.md#72-systemthreadingchannels).
+
+```csharp
+using System.Threading.Channels;
+
+var channel = Channel.CreateBounded<WorkItem>(64);
+
+async Task ProduceAsync(CancellationToken ct)
+{
+    await foreach (var item in source.WithCancellation(ct))
+        await channel.Writer.WriteAsync(item, ct);
+    channel.Writer.Complete();
+}
+
+async Task ConsumeAsync(CancellationToken ct)
+{
+    await foreach (var item in channel.Reader.ReadAllAsync(ct))
+        await ProcessAsync(item, ct);
+}
+```
+
+- Backpressure: dùng **bounded** channel khi producer có thể nhanh hơn consumer.  
+- Kết hợp `IAsyncEnumerable` (nguồn) → Channel (fan-in/fan-out) → worker async.  
+- `Complete(exception)` để lan lỗi tới phía đọc.
+
+---
+
+## 13. `PeriodicTimer` / `Task.Delay`
+
+### `Task.Delay`
+
+Một lần chờ / debounce / timeout đơn giản:
+
+```csharp
+await Task.Delay(TimeSpan.FromSeconds(1), ct);
+
+// Timeout đua với thao tác:
+var work = DoWorkAsync(ct);
+var completed = await Task.WhenAny(work, Task.Delay(timeout, ct));
+if (completed != work)
+    throw new TimeoutException();
+await work;
+```
+
+Tránh `Thread.Sleep` trong async method.
+
+### `PeriodicTimer` (.NET 6+)
+
+Vòng lặp định kỳ **không drift** kiểu naive `while + Delay` (vẫn phụ thuộc tải, nhưng API rõ ràng hơn cho periodic work):
+
+```csharp
+using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+while (await timer.WaitForNextTickAsync(ct))
+{
+    await PollAsync(ct);
+}
+```
+
+| | `Task.Delay` trong `while` | `PeriodicTimer` |
+|---|---|---|
+| Một lần chờ | Phù hợp | Không cần |
+| Polling / heartbeat | Được nhưng dễ viết lệch chu kỳ | Đúng use case |
+| Hủy | Token trên `Delay` | Token trên `WaitForNextTickAsync` |
+| Dispose | Không bắt buộc | `using` / `Dispose` timer |
+
+Worker dài hạn: kết hợp `PeriodicTimer` + linked CTS từ `IHostApplicationLifetime` / shutdown token.

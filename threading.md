@@ -1,5 +1,7 @@
 # Lập trình Thread
 
+> **Baseline:** .NET **10** / C# **14**. `System.Threading.Lock` từ C# **13** / .NET **9+**. Chi tiết async/await → [async.md](async.md).
+
 ---
 
 ## Mục lục
@@ -18,18 +20,21 @@
     - [3.3 Điều chỉnh min/max threads](#33-điều-chỉnh-minmax-threads)
   - [4. Đồng bộ hóa \& bộ công cụ](#4-đồng-bộ-hóa--bộ-công-cụ)
     - [4.1 `lock`/`Monitor`](#41-lockmonitor)
-    - [4.2 `Interlocked` \& `Volatile`](#42-interlocked--volatile)
-    - [4.3 `ManualResetEventSlim`/`AutoResetEvent`](#43-manualreseteventslimautoresetevent)
-    - [4.4 `SemaphoreSlim`](#44-semaphoreslim)
-    - [4.5 `ReaderWriterLockSlim`](#45-readerwriterlockslim)
-    - [4.6 `SpinLock`/`SpinWait`](#46-spinlockspinwait)
+    - [4.2 `System.Threading.Lock` (C# 13 / .NET 9+)](#42-systemthreadinglock-c-13--net-9)
+    - [4.3 `Interlocked` \& `Volatile`](#43-interlocked--volatile)
+    - [4.4 `ManualResetEventSlim`/`AutoResetEvent`](#44-manualreseteventslimautoresetevent)
+    - [4.5 `SemaphoreSlim`](#45-semaphoreslim)
+    - [4.6 `ReaderWriterLockSlim`](#46-readerwriterlockslim)
+    - [4.7 `SpinLock`/`SpinWait`](#47-spinlockspinwait)
   - [5. Biến theo thread: `ThreadStatic`, `ThreadLocal<T>`, `AsyncLocal<T>`](#5-biến-theo-thread-threadstatic-threadlocalt-asynclocalt)
   - [6. Cancellation: kiểu hợp tác](#6-cancellation-kiểu-hợp-tác)
   - [7. Mẫu Producer/Consumer](#7-mẫu-producerconsumer)
     - [7.1 `BlockingCollection<T>` (sử dụng Task để chạy Thread trong ThreadPool)](#71-blockingcollectiont-sử-dụng-task-để-chạy-thread-trong-threadpool)
     - [7.2 `System.Threading.Channels`](#72-systemthreadingchannels)
-  - [8. Chẩn đoán \& đo đạc](#8-chẩn-đoán--đo-đạc)
-  - [9. Best practices \& cảnh báo](#9-best-practices--cảnh-báo)
+  - [8. Parallel.For / PLINQ (con trỏ)](#8-parallelfor--plinq-con-trỏ)
+  - [9. `SynchronizationContext` \& `ConfigureAwait`](#9-synchronizationcontext--configureawait)
+  - [10. Chẩn đoán \& đo đạc](#10-chẩn-đoán--đo-đạc)
+  - [11. Best practices \& cảnh báo](#11-best-practices--cảnh-báo)
 
 ---
 
@@ -183,11 +188,82 @@ void Inc()
 }
 ```
 
-- `lock` ≈ `Monitor.Enter/Exit` (tự động trong presence of exception).  
-- **Không lock trên `this` hoặc type public** (dễ deadlock từ code ngoài).
-- C# 13 (.NET 9) hỗ trợ kiểu System.Threading.Lock để lock hoạt động hiệu quả hơn.
+Tương đương (giản lược):
 
-### 4.2 `Interlocked` & `Volatile`
+```csharp
+bool lockTaken = false;
+try
+{
+    Monitor.Enter(_gate, ref lockTaken);
+    _counter++;
+}
+finally
+{
+    if (lockTaken) Monitor.Exit(_gate);
+}
+```
+
+- `lock` trên `object` → `Monitor.Enter/Exit` (đảm bảo Exit khi có exception).  
+- **Không lock trên `this`, `typeof(T)`, hay string interned** (caller ngoài có thể tranh chấp / deadlock).  
+- `Monitor.Wait` / `Pulse` / `PulseAll` cho điều kiện trong critical section — dễ lỗi; thường ưu tiên `SemaphoreSlim`/`Channels`.
+
+### 4.2 `System.Threading.Lock` (C# 13 / .NET 9+)
+
+Kiểu **dedicated lock** thay cho lock trên `object` tùy ý. Compiler nhận diện `lock (lockObj)` khi `lockObj` là `System.Threading.Lock` và sinh code dùng API tối ưu hơn `Monitor` trên object sync-block.
+
+```csharp
+using System.Threading;
+
+private readonly Lock _gate = new();
+private int _counter;
+
+void Inc()
+{
+    lock (_gate) // C# 13: hạ tầng Lock, không qua Monitor trên object thường
+    {
+        _counter++;
+    }
+}
+```
+
+API tường minh (hữu ích khi cần scope hẹp / try-enter):
+
+```csharp
+void TryInc()
+{
+    using (_gate.EnterScope())
+    {
+        _counter++;
+    }
+}
+
+bool TryIncOnce()
+{
+    if (!_gate.TryEnter())
+        return false;
+    try
+    {
+        _counter++;
+        return true;
+    }
+    finally
+    {
+        _gate.Exit();
+    }
+}
+```
+
+| | `lock (object)` + `Monitor` | `System.Threading.Lock` |
+|---|---|---|
+| Identity | Mọi `object` đều có thể làm gate | Kiểu chuyên dụng, rõ ý đồ |
+| Lạm dụng | Dễ lock nhầm `this`/type | Khó nhầm hơn |
+| Runtime | Sync block / Monitor | Đường tối ưu hơn trên runtime mới |
+| `Wait`/`Pulse` | Có trên `Monitor` | Không thay thế Wait/Pulse — dùng primitive khác |
+| Yêu cầu | Mọi .NET | .NET **9+** (API); `lock` nhận diện từ **C# 13** |
+
+**Khuyến nghị (baseline .NET 10):** field đồng bộ mới dùng `Lock`; code cũ `object` gate vẫn đúng — không bắt buộc rewrite hàng loạt.
+
+### 4.3 `Interlocked` & `Volatile`
 
 ```csharp
 int x = 0;
@@ -209,7 +285,7 @@ void Worker()
 void Stop() => Volatile.Write(ref _done, true);
 ```
 
-### 4.3 `ManualResetEventSlim`/`AutoResetEvent`
+### 4.4 `ManualResetEventSlim`/`AutoResetEvent`
 
 ```csharp
 var evt = new ManualResetEventSlim(false);
@@ -228,7 +304,7 @@ Console.WriteLine("Go!");
 - `AutoResetEvent` đánh thức **một** waiter mỗi lần `Set()`.  
 - Bản `Slim` hiệu năng tốt cho in‑process; không cross-process.
 
-### 4.4 `SemaphoreSlim`
+### 4.5 `SemaphoreSlim`
 
 Giới hạn **đồng thời N** tác vụ:
 
@@ -245,7 +321,7 @@ finally
 }
 ```
 
-### 4.5 `ReaderWriterLockSlim`
+### 4.6 `ReaderWriterLockSlim`
 
 Đọc song song nhiều, ghi độc quyền:
 
@@ -263,10 +339,10 @@ T Read<T>(Func<T> f)
 }
 ```
 
-### 4.6 `SpinLock`/`SpinWait`
+### 4.7 `SpinLock`/`SpinWait`
 
 - **Spin** hữu ích khi lock **rất ngắn** và contention **thấp** (tránh context switch).  
-- **Cẩn thận** starvation; thường `lock`/`SemaphoreSlim` đủ tốt.
+- **Cẩn thận** starvation; thường `lock` / `Lock` / `SemaphoreSlim` đủ tốt.
 
 ---
 
@@ -335,18 +411,20 @@ await Task.WhenAll(consumers.Prepend(prod));
 
 ### 7.2 `System.Threading.Channels`
 
-Hiệu năng cao, không block (async‑friendly):
+Hiệu năng cao, **async-friendly** (không block thread khi chờ). Phù hợp pipeline I/O ↔ CPU. Chi tiết async → [async.md](async.md).
+
+**Bounded** (backpressure — writer chờ khi đầy):
 
 ```csharp
 using System.Threading.Channels;
 
 var ch = Channel.CreateBounded<int>(new BoundedChannelOptions(100)
 {
+    FullMode = BoundedChannelFullMode.Wait, // hoặc DropWrite / DropOldest / …
     SingleWriter = false,
     SingleReader = false
 });
 
-// Producer
 _ = Task.Run(async () =>
 {
     for (int i = 0; i < 1000; i++)
@@ -354,14 +432,79 @@ _ = Task.Run(async () =>
     ch.Writer.Complete();
 });
 
-// Consumer
 await foreach (var item in ch.Reader.ReadAllAsync())
     Process(item);
 ```
 
+**Unbounded** (đơn giản hơn, cẩn thận OOM nếu producer nhanh hơn consumer):
+
+```csharp
+var open = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+{
+    SingleReader = true,
+    SingleWriter = true // tối ưu khi đúng 1 reader/writer
+});
+```
+
+**Pattern thường gặp:**
+
+- Nhiều producer → một consumer (aggregate).
+- Một producer → nhiều consumer: mỗi consumer `ReadAsync` vòng lặp (cạnh tranh trên cùng reader) hoặc fan-out qua nhiều channel.
+- Luôn `Writer.Complete()` (hoặc `Complete(exception)`) khi hết dữ liệu; consumer thoát khỏi `ReadAllAsync`.
+- Truyền `CancellationToken` vào `WriteAsync`/`ReadAsync`/`ReadAllAsync`.
+
+So với `BlockingCollection`: Channel không chiếm thread khi chờ; ưu tiên cho code async hiện đại.
+
 ---
 
-## 8. Chẩn đoán & đo đạc
+## 8. Parallel.For / PLINQ (con trỏ)
+
+Cho **CPU-bound** trên nhiều core — không thay async I/O.
+
+```csharp
+using System.Threading.Tasks;
+
+Parallel.For(0, items.Length, i => ProcessCpu(items[i]));
+
+Parallel.ForEach(items, new ParallelOptions
+{
+    MaxDegreeOfParallelism = Environment.ProcessorCount,
+    CancellationToken = ct
+}, item => ProcessCpu(item));
+```
+
+**PLINQ** (xem thêm [linq.md](linq.md)):
+
+```csharp
+var results = source
+    .AsParallel()
+    .WithDegreeOfParallelism(Environment.ProcessorCount)
+    .WithCancellation(ct)
+    .Select(HeavyCompute)
+    .ToArray();
+```
+
+- Tránh I/O blocking bên trong `Parallel`/`AsParallel` (cạn thread pool).  
+- Side-effect / shared mutable state → cần đồng bộ hoặc dùng local aggregate.  
+- Đo trước: overhead partition có thể lớn hơn lợi ích với workload nhỏ.
+
+---
+
+## 9. `SynchronizationContext` & `ConfigureAwait`
+
+- UI (WPF/WinForms) và một số host gắn **`SynchronizationContext`**: continuation sau `await` có thể được **marshal** về context đó.
+- ASP.NET Core / console / worker hiện đại: thường **không** có SyncContext tùy biến → `ConfigureAwait(false)` ít thay đổi hành vi hơn so với .NET Framework + ASP.NET cũ.
+- Chi tiết capture context, library vs app: xem [async.md — Capture context & ConfigureAwait](async.md#6-capture-context--configureawaitfalse).
+
+```csharp
+// Cập nhật UI: đảm bảo chạy trên UI thread
+SynchronizationContext.Current?.Post(_ => label.Text = "done", null);
+// WPF: Dispatcher.InvokeAsync(...); WinForms: Control.BeginInvoke(...)
+```
+
+---
+
+## 10. Chẩn đoán & đo đạc
 
 ```csharp
 ThreadPool.GetMaxThreads(out var maxW, out var maxIO);
@@ -374,13 +517,14 @@ Console.WriteLine($"Pool: availW={availW}/{maxW}, availIO={availIO}/{maxIO}");
 
 ---
 
-## 9. Best practices & cảnh báo
+## 11. Best practices & cảnh báo
 
 - **Ưu tiên async I/O**; chỉ dùng thread cho CPU-bound hoặc API không async.  
 - **Không** tạo quá nhiều threads — để thread pool điều phối (work‑stealing, hill‑climbing).  
 - Tác vụ **blocking dài** → `TaskCreationOptions.LongRunning` hoặc **Thread** riêng.  
-- **Đồng bộ tối thiểu**: dùng `Interlocked` khi đủ; chỉ `lock` khi cần vùng critical dài.  
+- **Đồng bộ tối thiểu**: `Interlocked` khi đủ; `Lock`/`lock` khi cần critical section; tránh lock khi đang `await`.  
 - Dọn dẹp đúng: `CancellationToken`, `using` cho resource, `try/finally`.  
-- **UI** (WPF/WinForms) có **thread affinity**: cập nhật UI trên UI thread (`SynchronizationContext/Post/Send`, `Dispatcher.Invoke`).  
-- **Đo đạc trước tối ưu**; stress test để phát hiện race condition/deadlock.
-- Với I/O nặng: tách pipeline I/O sang **async + Channels**, phần CPU dùng `Parallel.ForEach` để tối ưu xử lý.
+- **UI**: thread affinity — cập nhật qua `SynchronizationContext` / `Dispatcher` (mục 9).  
+- **Đo đạc trước tối ưu**; stress test để phát hiện race/deadlock.  
+- Pipeline I/O nặng: **async + Channels**; phần CPU: `Parallel.ForEach` / PLINQ.  
+- Gate mới trên .NET 9+: ưu tiên `System.Threading.Lock` thay `object` tùy ý.
