@@ -3,7 +3,8 @@
 Tham chiếu sâu về **project SDK-style**, NuGet, và CLI `dotnet` trên baseline **.NET 10 / C# 14**.  
 Lớp *build/identity* của ứng dụng .NET (tương tự packages/modules bên Go) — không phải cú pháp ngôn ngữ thuần.
 
-> **Baseline:** .NET **10** SDK · TFM thường `net10.0` · ngôn ngữ mặc định **C# 14**.
+> **Baseline:** .NET **10** LTS (GA 11/2025 · hỗ trợ đến **14/11/2028**) · TFM `net10.0` · ngôn ngữ mặc định **C# 14**.  
+> C# **15** / .NET **11** = Preview (Preview 7 · 08/2026) — `<LangVersion>preview</LangVersion>` + SDK 11; không phải baseline repo.
 
 ---
 
@@ -70,9 +71,9 @@ Từ .NET Core, project dùng **SDK-style** `.csproj` (XML ngắn, convention-ov
 <!-- hoặc latest / preview (cẩn thận) -->
 ```
 
-- SDK .NET 10 mặc định gắn **C# 14** với `net10.0`.  
+- SDK .NET 10 mặc định gắn **C# 14** với `net10.0` — không cần ghi `LangVersion` trừ khi hạ / bật preview.  
 - Hạ `LangVersion` ≠ hạ được API runtime — thiếu API thì phải hạ TFM.  
-- `preview` chỉ khi chủ động theo dõi breaking change.
+- `preview` + TFM `net11.0` chỉ khi theo dõi **C# 15** (union, `closed`, labeled `break`, …) — surface có thể đổi trước GA.
 
 ### 2.3 Property thường gặp
 
@@ -356,7 +357,7 @@ dotnet publish -c Release -r linux-x64 -p:PublishSingleFile=true
 
 ## 12. Native AOT (`PublishAot`) — overview & pitfalls
 
-**Ổn định từ .NET 7+;** .NET 10 mở rộng compatibility.
+**Ổn định từ .NET 7+;** .NET 10 mở rộng compatibility (JIT/GC/BCL micro-opts khi nâng TFM — hot path vẫn đo BenchmarkDotNet). SDK ≥ 10.0.x trên CI.
 
 ```xml
 <PropertyGroup>
@@ -426,18 +427,31 @@ Dùng cho script/utility/prototype; app lớn → `dotnet project convert`.
 
 ## 14. Best practices & checklist
 
-- Pin SDK bằng `global.json` trên CI/team.  
+- Pin SDK bằng `global.json` trên CI/team (`>= 10.0`).  
 - Chuẩn hóa `Nullable` + `ImplicitUsings` + `TreatWarningsAsErrors` ở `Directory.Build.props`.  
 - Solution lớn → CPM. Tooling team → local tools.  
 - Phân biệt `ProjectReference` (nội bộ) vs package (biên giới version).  
-- Publish: chọn FDD / self-contained / single-file / AOT có chủ đích; đọc warning AOT/trim trước khi ship.  
-- Không nhét file-based app vào cây project nếu sợ “nhiễm” props.
+- Publish: chọn FDD / self-contained / single-file / AOT có chủ đích; đọc warning AOT/trim trước khi ship. File-based apps **bật `PublishAot` mặc định**.  
+- Không nhét file-based app vào cây project nếu sợ “nhiễm” props.  
+- .NET 8/9 EOS ~ **10/11/2026** — production dài hạn nên đã ở **10**. Không đưa C# 15 unions / `closed` vào nhánh GA.
 
 ```text
-[ ] TargetFramework = net10.0
+Checklist nâng cấp → .NET 10 / C# 14
+[ ] TFM net10.0; CI image SDK 10
 [ ] Nullable + ImplicitUsings
 [ ] Directory.Build.props + nuget.config rõ nguồn
 [ ] CPM nếu ≥ vài project
+[ ] Đọc breaking changes compiler .NET 10
+[ ] Span: kiểm tra overload resolution nếu API thêm ROS/Span
+[ ] Script/CLI nhỏ: cân nhắc file-based apps; AOT publish mặc định
+[ ] Không đưa C# 15 preview vào production
 [ ] InternalsVisibleTo cho test (nếu cần)
 [ ] CI: restore → build → test → (publish)
 ```
+
+| Nhóm ngôn ngữ | Trạng thái | Topic |
+|------|------------|-------|
+| Extension members, `field`, `?.=` , `nameof` unbound, Span conversions, lambda mods, partial ctor/event, compound assignment, `#:` | **C# 14 final** | `oop` / `operators` / `memory-spans` / `delegates-lambdas` / `preprocessor` / `main-function` |
+| Unions, `closed`, extension indexers, collection `with(…)`, labeled `break`/`continue`, memory safety… | **C# 15 preview** | `typesystem` / `oop` / `collections-generics` / `statements` / `memory-spans` |
+
+Tài nguyên: [C# 14](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-14) · [.NET 10](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-10/overview) · [C# 15 preview](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [File-based apps](https://learn.microsoft.com/dotnet/core/sdk/file-based-apps)

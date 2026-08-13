@@ -88,7 +88,8 @@ ll.AddBefore(n2, 1); // O(1)
 
 ### 2.3 `Queue<T>`
 
-- Hàng đợi FIFO. `Enqueue`/`Dequeue` amortized **O(1)**.
+- Hàng đợi FIFO. `Enqueue`/`Dequeue` amortized **O(1)**.  
+- Ưu tiên theo key: `PriorityQueue<TElement,TPriority>` (.NET 6+) — không thay `Queue<T>` cho FIFO thuần.
 
 ```csharp
 var q = new Queue<string>();
@@ -178,6 +179,8 @@ var list2 = list.Add(1).Add(2); // list vẫn rỗng
 - `ConcurrentQueue<T>`, `ConcurrentStack<T>`, `ConcurrentBag<T>`: hàng đợi/ngăn xếp/túi thread-safe (không có thứ tự mạnh).
 - `BlockingCollection<T>`: bọc trên concurrent collection với **bounded capacity** & blocking producers/consumers.
 - `System.Threading.Channels` (thư viện riêng): **channel** tốc độ cao (producer/consumer) — tốt cho I/O pipeline.
+- **`PriorityQueue<TElement,TPriority>`** (.NET 6+): heap; không phải `IEnumerable` đầy đủ như `Queue<T>`.
+- **`FrozenDictionary` / `FrozenSet`** (`System.Collections.Frozen`, .NET 8+): xây một lần, đọc rất nhiều — lookup nhanh hơn `Dictionary` khi data bất biến sau init.
 
 ```csharp
 var cd = new ConcurrentDictionary<string,int>();
@@ -318,7 +321,7 @@ public interface IRepository<T> where T : class
 }
 ```
 
-- Ràng buộc đặc biệt: `unmanaged`, `notnull`, `struct`, `class`, `new()`.  
+- Ràng buộc đặc biệt: `unmanaged`, `notnull`, `struct`, `class`, `new()`, **`allows ref struct`** (C# 13 — generic nhận `Span<T>` / `ref struct`).  
 - **Ràng buộc nhiều**: `where T : SomeBase, ISvc, new()`.
 
 ### 10.2 Phương sai (variance): `out`/`in`

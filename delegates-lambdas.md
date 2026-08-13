@@ -1,6 +1,7 @@
 # Delegate & Lambda
 
-> Lưu ý: đọc thêm chương *Events*, *LINQ*, *Type System*, *Methods*, *Async*.
+> **Baseline:** .NET **10** / C# **14** — modifier `ref`/`in`/`out`/`scoped` trên lambda không cần kiểu tường minh (§6.4).  
+> Đọc thêm: *Events*, *LINQ*, *Type System*, *Methods*, *Async*.
 
 ---
 

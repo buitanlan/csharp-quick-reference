@@ -1,5 +1,7 @@
 # Toán tử (Operators) trong C# — Bản chi tiết hiện đại
 
+> **Baseline:** .NET **10** / C# **14** — null-conditional assignment, `nameof` unbound generics, user-defined compound assignment / instance `++` `--`.
+
 ## Mục lục
 
 - [Toán tử (Operators) trong C# — Bản chi tiết hiện đại](#toán-tử-operators-trong-c--bản-chi-tiết-hiện-đại)

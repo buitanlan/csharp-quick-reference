@@ -1,5 +1,7 @@
 # Literals
 
+> **Baseline:** .NET **10** / C# **14**. Raw string / UTF-8 `u8`: C# 11. Escape `\e`: C# 13.
+
 **Literal** là giá trị viết trực tiếp trong mã nguồn (không thông qua biến hay biểu thức). C# hỗ trợ nhiều loại literal: **số** (nguyên & thực), **chuỗi/char**, **bool**, **`null`**, **`default`**, cùng các biến thể hiện đại như **dấu gạch dưới `_`** để phân tách chữ số, **nhị phân `0b`**, **raw string `""" ... """`**, **UTF-8 `"..."u8`**, và **string interpolation**.
 
 ---

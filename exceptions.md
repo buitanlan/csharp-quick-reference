@@ -1,5 +1,7 @@
 # Exception & Error Handling trong C#
 
+> **Baseline:** .NET **10** / C# **14**.
+
 ---
 
 ## Mục lục
@@ -77,6 +79,15 @@ if (arg is null)
     throw new ArgumentNullException(nameof(arg));
 
 throw new InvalidOperationException("State is invalid");
+```
+
+Helper guard (.NET 6+), gọn hơn `if` + `throw` — **vẫn là exception path**, không thay `TryParse`:
+
+```csharp
+ArgumentNullException.ThrowIfNull(arg);
+ArgumentOutOfRangeException.ThrowIfNegative(count);
+ArgumentException.ThrowIfNullOrWhiteSpace(name); // .NET 7/8+
+ObjectDisposedException.ThrowIf(disposed, this);
 ```
 
 ---

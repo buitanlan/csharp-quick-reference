@@ -1,5 +1,7 @@
 # LINQ (Language Integrated Query)
 
+> **Baseline:** .NET **10** / C# **14**. BCL/LINQ micro-opts khi nâng TFM — hot path vẫn đo BenchmarkDotNet.
+
 **LINQ** đem cú pháp truy vấn vào C#, thống nhất cách làm việc với **tập hợp đối tượng**, **XML**, **CSDL**, **JSON**, **in-memory** và cả **stream async** (thông qua `IAsyncEnumerable<T>` + gói mở rộng).  
 
 ---

@@ -1,4 +1,4 @@
-# Hệ thống kiểu dữ liệu (Common Type Sytem)
+# Hệ thống kiểu dữ liệu (Common Type System)
 
 > **Baseline:** .NET **10** / C# **14**. Mục [18. Union types](#18-union-types-c-15-preview) là **PREVIEW (.NET 11 / C# 15)** — chưa GA.
 
@@ -26,7 +26,7 @@ sẽ dùng các thông tin này để đảm bảo an toàn kiểu khi nó cấp
 
 ## Mục lục
 
-- [Hệ thống kiểu dữ liệu (Common Type Sytem)](#hệ-thống-kiểu-dữ-liệu-common-type-sytem)
+- [Hệ thống kiểu dữ liệu (Common Type System)](#hệ-thống-kiểu-dữ-liệu-common-type-system)
   - [Mục lục](#mục-lục)
   - [1. Tổng quan CTS/CLS \& Runtime](#1-tổng-quan-ctscls--runtime)
   - [2. Bức tranh bộ nhớ: Stack/Managed Heap \& GC](#2-bức-tranh-bộ-nhớ-stackmanaged-heap--gc)
@@ -288,7 +288,8 @@ DateTime dt = default;  // 01/01/0001 ...
 
 - `where T : class` / `struct` / `unmanaged` / `notnull`  
 - `where T : new()` (có ctor không tham số)  
-- `where T : SomeBase, ISomeInterface` (đa ràng buộc)
+- `where T : SomeBase, ISomeInterface` (đa ràng buộc)  
+- **`allows ref struct`** (C# 13): generic được nhận `ref struct` (`Span<T>`) — anti-constraint; T **không** box được, hạn chế async/iterator tùy ngữ cảnh. Xem [memory-spans.md](memory-spans.md).
 
 ```csharp
 T Create<T>() where T : new() => new T();
@@ -450,6 +451,12 @@ string name = pet switch
 ```
 
 Nếu thêm một case mới vào `Pet`, compiler sẽ cảnh báo tại tất cả `switch` chưa xử lý case đó.
+
+**Try-Both matching (Preview 7+):** khi pattern áp lên giá trị union, compiler thử pattern trên **chính instance union**; nếu fail thì thử trên **`Value` chứa bên trong**. Do đó `pet is Dog d` và pattern trên wrapper đều có thể khớp — xác nhận bản preview (có thể tinh chỉnh trước GA).
+
+Runtime: `UnionAttribute` / `IUnion` (`System.Runtime.CompilerServices`) — BCL từ các preview gần đây. Learn: [C# 15 unions](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [blog](https://devblogs.microsoft.com/dotnet/csharp-15-union-types/).
+
+Hierarchy OOP đóng (cùng exhaustiveness nhưng *kế thừa*): xem `closed` ở [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
 
 ### 18.4 Đặc điểm nổi bật
 

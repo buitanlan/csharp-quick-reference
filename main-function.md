@@ -1,6 +1,6 @@
 # Hàm Main & điểm vào chương trình
 
-Mỗi ứng dụng C# executable cần **một** điểm vào (entry point). Baseline hiện tại: **.NET 10 / C# 14** — hỗ trợ `Main` cổ điển, **top-level statements** (C# 10+), và **file-based apps** (`dotnet run file.cs`, .NET 10+).
+Mỗi ứng dụng C# executable cần **một** điểm vào (entry point). Baseline hiện tại: **.NET 10 / C# 14** — hỗ trợ `Main` cổ điển, **top-level statements** (C# **9+**; template mặc định từ .NET 6), và **file-based apps** (`dotnet run file.cs`, .NET 10+).
 
 Khác Go (`func main()` không tham số / không return), C# cho phép nhiều chữ ký `Main` hợp lệ (`void`/`int`/`Task`/`Task<int>`, có hoặc không `args`, sync hoặc async).
 
@@ -14,7 +14,7 @@ Khác Go (`func main()` không tham số / không return), C# cho phép nhiều 
   - [Mục lục](#mục-lục)
   - [1. Chữ ký Main hợp lệ](#1-chữ-ký-main-hợp-lệ)
   - [2. Chọn entry point khi có nhiều Main](#2-chọn-entry-point-khi-có-nhiều-main)
-  - [3. Top-level statements (C# 10+)](#3-top-level-statements-c-10)
+  - [3. Top-level statements (C# 9+)](#3-top-level-statements-c-9)
   - [4. Tổng hợp Program / `<Main>$` bởi compiler](#4-tổng-hợp-program--main-bởi-compiler)
   - [5. Tham số dòng lệnh: `args` \& Environment](#5-tham-số-dòng-lệnh-args--environment)
   - [6. Mã thoát (exit codes)](#6-mã-thoát-exit-codes)
@@ -82,9 +82,9 @@ Khi project có nhiều method `Main` hợp lệ (ví dụ nhiều class demo tr
 
 ---
 
-## 3. Top-level statements (C# 10+)
+## 3. Top-level statements (C# 9+)
 
-Từ C# 10, có thể viết executable code trực tiếp ở root file — không cần class `Program` / method `Main` tường minh. `dotnet new console` mặc định dùng TLS.
+Từ **C# 9**, có thể viết executable code trực tiếp ở root file — không cần class `Program` / method `Main` tường minh. Template `dotnet new console` (từ .NET 6) mặc định dùng TLS.
 
 ```csharp
 Console.WriteLine("Hello World!");
@@ -376,8 +376,8 @@ Checklist
 |--------|---------|
 | `Main` `void`/`int` + `args` | từ đầu |
 | `async Task` / `Task<int> Main` | C# 7.1 |
-| Top-level statements / await | C# 10 / .NET 6 |
+| Top-level statements / await | C# 9 / phổ biến template .NET 6 |
 | Implicit / global usings | .NET 6+ |
 | File-based apps, `#:` | **.NET 10 / C# 14** |
 
-Learn: [Main](https://learn.microsoft.com/dotnet/csharp/fundamentals/program-structure/main-command-line) · [TLS](https://learn.microsoft.com/dotnet/csharp/fundamentals/program-structure/top-level-statements) · [File-based apps](https://learn.microsoft.com/dotnet/core/sdk/file-based-apps) · [C# 14 hub](csharp14-dotnet10.md)
+Learn: [Main](https://learn.microsoft.com/dotnet/csharp/fundamentals/program-structure/main-command-line) · [TLS](https://learn.microsoft.com/dotnet/csharp/fundamentals/program-structure/top-level-statements) · [File-based apps](https://learn.microsoft.com/dotnet/core/sdk/file-based-apps)

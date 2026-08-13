@@ -1,5 +1,7 @@
 # Statements trong C#
 
+> **Baseline:** .NET **10** / C# **14**. Top-level statements: C# **9/10**. Labeled `break`/`continue`: **C# 15 preview**.
+
 ---
 
 ## Mục lục
@@ -27,6 +29,7 @@
     - [7.4 `await foreach` (C# 8) — async streams](#74-await-foreach-c-8--async-streams)
   - [8. Jump statements: `break`, `continue`, `return`, `throw`, `goto`, `yield`](#8-jump-statements-break-continue-return-throw-goto-yield)
     - [8.1 `break` / `continue`](#81-break--continue)
+    - [8.1.1 Labeled `break` / `continue` (C# 15 preview)](#811-labeled-break--continue-c-15-preview)
     - [8.2 `return`](#82-return)
     - [8.3 `throw`](#83-throw)
     - [8.4 `goto` \& labeled statement](#84-goto--labeled-statement)
@@ -60,19 +63,16 @@
 
 ## 2. Top‑level statements (C# 9)
 
-Cho phép viết chương trình **không cần `Main`** tường minh trong file entry:
+Cho phép viết chương trình **không cần `Main`** tường minh trong file entry. Chi tiết đầy đủ (nhiều Main, `Program`/`<Main>$`, file-based apps, pitfalls): [main-function.md §3+](main-function.md#3-top-level-statements-c-9).
 
 ```csharp
 // Program.cs
-using System;
-
 Console.WriteLine("Hello World!");
 var name = args.Length > 0 ? args[0] : "guest";
-Console.WriteLine($"Hi, {name}");
 ```
 
-- File top-level có thể `await` trực tiếp.  
-- Chỉ nên dùng cho app nhỏ, demo, script; app lớn vẫn nên có `Program.Main` rõ ràng.
+- File top-level có thể `await` trực tiếp (C# 9).  
+- **Một** file TLS / project. App lớn: type khai báo **sau** statements, hoặc `Program.Main` tường minh.
 
 ---
 
@@ -280,6 +280,28 @@ static async IAsyncEnumerable<string> ReceiveAsync(ChannelReader<string> r)
 
 - `break` thoát khỏi vòng lặp hiện tại hoặc `switch`.  
 - `continue` bỏ phần còn lại của vòng lặp & bắt đầu vòng mới.
+
+#### 8.1.1 Labeled `break` / `continue` (C# 15 preview)
+
+> **PREVIEW (.NET 11 / C# 15).** Baseline C# 14: `break`/`continue` chỉ ảnh hưởng vòng **gần nhất**; thoát vòng ngoài phải `goto` hoặc cờ boolean.
+
+C# 15 cho phép gắn nhãn vòng / `switch` rồi `break outer;` / `continue outer;`:
+
+```csharp
+outer:
+for (int i = 0; i < n; i++)
+{
+    for (int j = 0; j < m; j++)
+    {
+        if (done) break outer;      // thoát cả hai vòng
+        if (skipRow) continue outer; // lần lặp i tiếp theo
+    }
+}
+```
+
+- Nhãn đứng trước vòng/`switch` cần điều khiển (cú pháp gần `goto` label, nhưng `break`/`continue` **không** nhảy tùy ý).  
+- Ưu tiên hơn `goto done` khi ý định là “thoát/skip vòng ngoài”.  
+- Trước GA: xác nhận syntax trên SDK preview bạn dùng.
 
 ### 8.2 `return`
 

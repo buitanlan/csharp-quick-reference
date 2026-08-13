@@ -1,5 +1,8 @@
 # Keywords
 
+> **Baseline:** .NET **10** / C# **14**. `extension` / `field`: C# 14. `union` / `closed`: **C# 15 preview**.  
+> Mục 1–80: reserved + vài contextual đã tách. Mục 81: bảng contextual còn lại (`record`, `async`/`await`, …).
+
 ---
 
 ## 1. `abstract`
@@ -143,7 +146,8 @@ switch (statusCode)
 ```
 
 **Ghi chú:**  
-Quá nhiều `break`/`continue` trong cùng một vòng lặp có thể làm flow khó đọc.
+Quá nhiều `break`/`continue` trong cùng một vòng lặp có thể làm flow khó đọc.  
+**C# 15 preview:** `break outer;` / `continue outer;` trên vòng có nhãn — xem [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).
 
 ---
 
@@ -314,6 +318,8 @@ foreach (var item in items)
     Process(item);
 }
 ```
+
+**Ghi chú:** **C# 15 preview** — `continue outer;` với nhãn vòng ngoài: [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).
 
 ---
 
@@ -1438,6 +1444,49 @@ string name = pet switch
 - Các kiểu thành viên được chuyển đổi ngầm định sang union type.  
 - Compiler bắt buộc xử lý đầy đủ tất cả các case trong `switch` (exhaustiveness).  
 - Yêu cầu .NET 11 Preview + `<LangVersion>preview</LangVersion>`.
+
+---
+
+## 80. `closed`
+
+- **Loại:** contextual · **C#:** 15.0 — **PREVIEW (.NET 11 / C# 15)**  
+- **Mục đích:** Đánh dấu class/record hierarchy **đóng** trong assembly — mọi derived type phải cùng assembly; `switch` exhaustive. Xem [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
+
+**Ví dụ:**
+
+```csharp
+public closed record class GateState;
+public record class Closed : GateState;
+public record class Open(float Percent) : GateState;
+```
+
+**Ghi chú:** Khác `union` (ghép kiểu không cần thừa kế). Không thuộc baseline C# 14.
+
+---
+
+## 81. Contextual keywords & alias (không đủ chỗ từng mục)
+
+Các token dưới **không** luôn reserved; chỉ là keyword trong ngữ cảnh. Chi tiết nằm ở topic file.
+
+| Token | Vai trò ngắn | Topic |
+|-------|----------------|-------|
+| `record` | `record class` / `record struct` | [oop.md](oop.md) · [typesystem.md](typesystem.md) §8 |
+| `required` | member bắt buộc init | [oop.md](oop.md) §1.8 / §5.4 |
+| `file` | access modifier cùng file (C# 11) | [oop.md](oop.md) §1.3 |
+| `scoped` | lifetime `ref`/`ref struct` (C# 11) | [statements.md](statements.md) §4.6 · [memory-spans.md](memory-spans.md) |
+| `when` | filter `catch` / pattern | [exceptions.md](exceptions.md) · [statements.md](statements.md) |
+| `with` | `with { }` copy record; `with(...)` collection args **preview** | [typesystem.md](typesystem.md) · [collections-generics.md](collections-generics.md) |
+| `and` / `or` / `not` | pattern combinator (C# 9) | [operators.md](operators.md) · [statements.md](statements.md) |
+| `async` / `await` | bất đồng bộ | [async.md](async.md) |
+| `yield` | iterator | [methods.md](methods.md) §13 |
+| `var` | suy luận kiểu local | [typesystem.md](typesystem.md) §11 |
+| `nameof` | tên symbol (C# 14: unbound generic) | [operators.md](operators.md) §13 |
+| `nint` / `nuint` | integer kích thước pointer | [typesystem.md](typesystem.md) §3.3 |
+| `unmanaged` | generic constraint | [typesystem.md](typesystem.md) §13 |
+| `allows` | `allows ref struct` (C# 13) | [typesystem.md](typesystem.md) §13 · [memory-spans.md](memory-spans.md) |
+| `dynamic` | DLR binding | [typesystem.md](typesystem.md) §4 |
+
+`get` `set` `init` `add` `remove` `value` `partial` `where` `select` `from` `let` `join` `group` `into` `orderby` `ascending` `descending` `on` `equals` `by` — contextual accessor / query; xem [oop.md](oop.md) / [linq.md](linq.md).
 
 ---
 

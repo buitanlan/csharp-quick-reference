@@ -1,5 +1,7 @@
 # Phương thức (Method) trong C#
 
+> **Baseline:** .NET **10** / C# **14**. Extension members / `params` collections: xem §11–12. Extension indexer: **C# 15 preview** → [oop.md §6.4](oop.md#64-extension-indexers-c-15-preview).
+
 Trong C#, **phương thức (method)** là đơn vị cơ bản để đóng gói logic và định nghĩa hành vi cho một kiểu (`class`, `struct`, `record`, v.v.).  
 
 ---
@@ -817,7 +819,7 @@ Khi `foreach` kết thúc (dù bình thường hay exception), enumerator đư�
 
 ## 14. Tài liệu liên quan
 
-- **OOP / extension members**: [oop.md — §8](./oop.md#8-extension-members-c-14) — *khối `extension`, property/static/operator.*
+- **OOP / extension members**: [oop.md — §8](./oop.md#8-extension-members-c-14) — *khối `extension`, property/static/operator.* Indexer extension: [oop.md §6.4](./oop.md#64-extension-indexers-c-15-preview) *(preview)*.
 - **Delegate & Lambda**: [delegates-lambdas.md](./delegates-lambdas.md) — *callback, closure, modifier trên lambda (C# 14).*
 - **Chương bất đồng bộ**: [async.md](./async.md) — *async/await, Task/ValueTask, exception/cancellation trong async, và async streams (`IAsyncEnumerable<T>`, `await foreach`).*
 - **Toán tử**: [operators.md](./operators.md) — *compound assignment / instance `++` (C# 14).*

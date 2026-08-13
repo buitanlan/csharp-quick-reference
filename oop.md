@@ -2,6 +2,8 @@
 
 *(Class, OOP, Properties/Indexers, Events)*
 
+> **Baseline:** .NET **10** / C# **14** — `field`, partial ctor/event, extension members. **C# 15 preview:** `closed` hierarchy, extension indexer.
+
 ---
 
 ## Mục lục
@@ -24,6 +26,7 @@
     - [2.3 `base` \& constructor chaining](#23-base--constructor-chaining)
     - [2.4 Abstract class vs interface](#24-abstract-class-vs-interface)
     - [2.5 Kiểm tra/cast kiểu (`is`/`as`/pattern matching)](#25-kiểm-tracast-kiểu-isaspattern-matching)
+    - [2.6 Closed hierarchies (C# 15 preview)](#26-closed-hierarchies-c-15-preview)
   - [3. Interface](#3-interface)
     - [3.1 Khai báo/triển khai](#31-khai-báotriển-khai)
     - [3.2 Default interface methods (C# 8)](#32-default-interface-methods-c-8)
@@ -43,6 +46,7 @@
     - [6.1 Cú pháp \& ví dụ](#61-cú-pháp--ví-dụ)
     - [6.2 Nhiều tham số, quyền truy cập khác nhau](#62-nhiều-tham-số-quyền-truy-cập-khác-nhau)
     - [6.3 Mẫu dùng thường gặp](#63-mẫu-dùng-thường-gặp)
+    - [6.4 Extension indexers (C# 15 preview)](#64-extension-indexers-c-15-preview)
   - [7. Events](#7-events)
     - [7.1 Ôn nhanh delegate](#71-ôn-nhanh-delegate)
     - [7.2 `event` là gì?](#72-event-là-gì)
@@ -92,6 +96,7 @@ public class Counter
 ### 1.3 Access modifiers
 
 - `public`, `private`, `protected`, `internal`, `protected internal`, `private protected`.  
+- **`file`** (C# 11): member/type chỉ thấy trong **cùng file** — hữu ích generated code / helper không leak ra assembly.  
 - Quy tắc tổng quát: **thu hẹp phạm vi** nhất có thể (*least privilege*).
 
 ### 1.4 Static vs instance
@@ -389,6 +394,30 @@ switch (s)
 
 - **Pattern matching** (C# hiện đại) giúp code ngắn gọn, an toàn null/type.
 
+### 2.6 Closed hierarchies (C# 15 preview)
+
+> **PREVIEW (.NET 11 / C# 15).** Cần SDK 11 + `<LangVersion>preview</LangVersion>`. Không thuộc baseline .NET 10.
+
+`closed` trên class/record: tập kiểu derived **cố định trong assembly** — compiler biết mọi subtype → `switch` exhaustive **không** cần `_`.
+
+Khác **union** (`typesystem.md` §18): union *ghép* các kiểu có sẵn (không cần thừa kế chung); `closed` là *hierarchy* OOP đóng.
+
+```csharp
+public closed record class GateState;
+public record class Closed : GateState;
+public record class Open(float Percent) : GateState;
+
+string Label(GateState s) => s switch
+{
+    Closed => "shut",
+    Open o => $"open {o.Percent:P0}",
+};
+```
+
+- Derived type ngoài assembly khai báo `closed` → lỗi.  
+- Dùng khi mô hình trạng thái/ADT vẫn muốn kế thừa + shared members.  
+- Union vs closed: không chung base → `union`; có cây kế thừa + exhaustiveness → `closed`.
+
 ---
 
 ## 3. Interface
@@ -664,6 +693,25 @@ public class Settings
 - Truy cập bộ sưu tập tuỳ biến (`SparseArray`, `Grid`, `RangeMap`…).  
 - Cung cấp API “giống mảng” cho cấu trúc dữ liệu.
 
+### 6.4 Extension indexers (C# 15 preview)
+
+> **PREVIEW.** C# 14 đã có extension **method/property/operator**; C# 15 thêm **indexer** trong `extension` block.
+
+```csharp
+public static class SpanExtensions
+{
+    extension<T>(ReadOnlySpan<T> span)
+    {
+        public T this[Index i] => span[i];
+        public ReadOnlySpan<T> this[Range r] => span[r];
+    }
+}
+```
+
+- Cùng quy tắc discoverability (`using` namespace) như extension method.  
+- Không thêm storage — chỉ computed access.  
+- Baseline 14: indexer chỉ trên type thật; xem §8.
+
 ---
 
 ## 7. Events
@@ -754,7 +802,7 @@ public class Source
 C# 14 giới thiệu khối **`extension`** trong `static class` (top-level, không generic) để khai báo *extension members*: method, property, operator — theo kiểu **instance** hoặc **static** của receiver. Classic extension method (`this T` trên tham số đầu) vẫn hoạt động và **tương thích IL** với dạng mới.
 
 > Góc nhìn method/API: xem thêm [methods.md — §12](./methods.md#12-this-và-extension-method).  
-> **C# 15 Preview:** extension **indexer** trong `extension` block — chưa GA; đánh dấu *preview* nếu dùng.
+> **C# 15 Preview:** extension **indexer** — [§6.4](#64-extension-indexers-c-15-preview).
 
 ### 8.1 `extension` block — cú pháp
 

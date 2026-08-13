@@ -19,6 +19,7 @@ Tập trung semantics, lifetime, pitfalls (tương tự chương pointers bên G
   - [6. C\# 14 — implicit Span conversions](#6-c-14--implicit-span-conversions)
   - [7. `scoped` (C\# 11) — lifetime](#7-scoped-c-11--lifetime)
   - [8. `unsafe` \& pointers — overview](#8-unsafe--pointers--overview)
+  - [8.1 Memory safety (C# 15 preview)](#81-memory-safety-c-15-preview)
   - [9. `ArrayPool<T>` \& `MemoryMarshal`](#9-arraypoolt--memorymarshal)
   - [10. Pitfalls thường gặp](#10-pitfalls-thường-gặp)
   - [11. Cheat sheet chọn API](#11-cheat-sheet-chọn-api)
@@ -311,6 +312,14 @@ static int Add(int a, int b) => a + b;
 - Team không quen review memory safety.
 
 > **Mặc định hiện đại:** `Span` / `ref struct` / `stackalloc` safe. `unsafe` cho interop / layout / buffer cực đoan sau khi đo.
+
+### 8.1 Memory safety (C# 15 preview)
+
+> **PREVIEW.** C# 15 nới một phần thao tác pointer **khỏi** khối `unsafe` (compat mode / `nameof` trên pointer-related, v.v.) — **dereference** (`*p`) vẫn `unsafe`.
+
+- Mục tiêu: giảm ceremony khi làm interop/`sizeof` mà không mở toàn file `unsafe`.  
+- Baseline 14: mọi pointer arithmetic / dereference vẫn trong `unsafe`.  
+- Xem [What's new in C# 15 — Memory safety](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15); surface có thể đổi trước GA.
 
 ---
 
