@@ -1,7 +1,32 @@
 # Keywords
 
 > **Baseline:** .NET **10** / C# **14**. `extension` / `field`: C# 14. `union` / `closed`: **C# 15 preview**.  
-> Mục 1–80: reserved + vài contextual đã tách. Mục 81: bảng contextual còn lại (`record`, `async`/`await`, …).
+> Mục 1–80: reserved + vài contextual đã tách thành mục. Mục 81: bảng contextual còn lại — gồm **`record`**, **`async`/`await`**, **`yield`**, **`var`**, **`nameof`**.
+
+C# phân token thành vài lớp — **không** phải mọi chữ “keyword” trong docs đều cấm dùng làm tên biến:
+
+| Lớp | Ý nghĩa | Ví dụ |
+|-----|---------|--------|
+| **Reserved** | Keyword mọi ngữ cảnh; không đặt identifier (trừ `@int`) | `class`, `if`, `void`, `int`, `return` |
+| **Contextual** | Chỉ keyword ở vị trí nhất định; chỗ khác là identifier hợp lệ | `async`, `await`, `yield`, `var`, `record`, `when`, `where`, `get`, `from` |
+| **Preprocessor** | Chỉ thị compiler, **không** thuộc grammar biểu thức C#; viết `#` đầu dòng | `#if`, `#nullable`, `#region`, `#:` (file-based, C# 14) — [preprocessor-directives.md](preprocessor-directives.md) |
+
+Không nhầm ba lớp:
+
+| Viết | Là gì | Không phải |
+|------|--------|------------|
+| `if (x)` | keyword reserved | `#if` |
+| `await foo` | contextual | method tên `await` vẫn được (đừng) |
+| `#:package X@1` | preprocessor file-based C# 14 | `using` NuGet trong C# |
+| `record R(...)` | contextual | reserved như `class` |
+
+`@` escape identifier trùng reserved (`int @class = 1`). Contextual (`file`, `from`) thường không cần `@` trừ khi đúng slot keyword. `from` là tên biến hợp lệ trong method bình thường; trong `from x in xs` thì là query. `async` đặt tên biến được, nhưng **không** nên — dễ đọc nhầm.
+
+Preprocessor **không** xuất hiện trong IL như keyword: `#if DEBUG` cắt source trước compile; `#:` (C# 14) chỉ file-based SDK đọc, không phải `if` runtime. Trộn `#if` với TLS/`Main` để “chọn entry” rất rối — dùng `StartupObject` / tách project.
+
+Gợi ý tra: reserved → mục 1–78 (+ `union` 79 preview). Contextual “lớn” đã tách: `extension`, `field`, `closed`. Còn lại (`record`, `async`, `await`, `yield`, `var`, `nameof`, LINQ, accessor) → **§81**. Pitfall/when nằm ở **Ghi chú**, không lặp lại cả topic `async.md`.
+
+Trang này là **mục lục + pitfall ngắn**; semantics đầy đủ ở topic (`statements`, `oop`, `async`, `linq`, …) — không phải changelog C# 14/15. Đọc keyword mỏng → Ghi chú; contextual không có mục riêng → **§81**.
 
 ---
 
@@ -35,7 +60,8 @@ public sealed class Circle : Shape
 ```
 
 **Ghi chú:**  
-Thường dùng khi muốn định nghĩa “hợp đồng + một phần behavior chung” cho một nhóm class.
+Thường dùng khi muốn định nghĩa “hợp đồng + một phần behavior chung” cho một nhóm class.  
+`abstract` member không có body (trừ default interface — khác). Class có abstract member phải `abstract`. Không `new` abstract class; `sealed` + `abstract` cấm. Factory/`Activator` trên abstract → runtime fail.
 
 ---
 
@@ -59,7 +85,8 @@ if (s != null)
 ```
 
 **Ghi chú:**  
-Luôn nhớ kiểm tra `null` sau khi dùng `as`. Nếu muốn lỗi rõ ràng hơn, dùng cast thường `(T)obj`.
+Luôn nhớ kiểm tra `null` sau khi dùng `as`. Nếu muốn lỗi rõ ràng hơn, dùng cast thường `(T)obj`.  
+`as` chỉ cho reference / `Nullable<T>` — không `as` sang `int`. Pattern `is T t` vừa test vừa bind, thường sạch hơn `as` + if. `as` không chạy user-defined conversion (khác cast).
 
 ---
 
@@ -94,7 +121,8 @@ public class Dog : Animal
 ```
 
 **Ghi chú:**  
-Không dùng được trong `struct`. Nếu base không có ctor mặc định, lớp con phải gọi `base(...)`.
+Không dùng được trong `struct`. Nếu base không có ctor mặc định, lớp con phải gọi `base(...)`.  
+`base.Method()` trong `override` tránh recursion vô hạn khi quên. Primary ctor + `base(...)`: [oop.md](oop.md). Không `base` trong static.
 
 ---
 
@@ -117,6 +145,9 @@ else
     Console.WriteLine("Disabled");
 }
 ```
+
+**Ghi chú:**  
+Không dùng `0`/`1` thay `bool` như C. `if (flag == true)` thừa — viết `if (flag)`. `bool?` cho tri-state (unset); đừng nhầm `default(bool)` (`false`) với “chưa gán”.
 
 ---
 
@@ -147,7 +178,8 @@ switch (statusCode)
 
 **Ghi chú:**  
 Quá nhiều `break`/`continue` trong cùng một vòng lặp có thể làm flow khó đọc.  
-**C# 15 preview:** `break outer;` / `continue outer;` trên vòng có nhãn — xem [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).
+**C# 15 preview:** `break outer;` / `continue outer;` trên vòng có nhãn — xem [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).  
+`break` trong `switch` không thoát vòng bao ngoài — đó là lý do labeled break preview. `break` không dùng trong `if`.
 
 ---
 
@@ -164,7 +196,8 @@ byte[] buffer = new byte[1024];
 ```
 
 **Ghi chú:**  
-Phép toán trên `byte` trả về `int`, cần cast ngược nếu muốn gán lại vào `byte`.
+Phép toán trên `byte` trả về `int`, cần cast ngược nếu muốn gán lại vào `byte`.  
+`byte` không dấu 0–255; `sbyte` có dấu — nhầm interop. `byte[]` ≠ `Span<byte>` / `Memory<byte>` — API hiện đại ưu tiên span. Overflow 255+1 wrap nếu unchecked.
 
 ---
 
@@ -191,7 +224,8 @@ switch (status)
 ```
 
 **Ghi chú:**  
-Trong `switch` cũ, mỗi `case` phải kết thúc bằng `break`/`return`/`goto`… Trên `switch expression` (C# 8+) không dùng `case` kiểu này nữa.
+Trong `switch` cũ, mỗi `case` phải kết thúc bằng `break`/`return`/`goto`… Trên `switch expression` (C# 8+) không dùng `case` kiểu này nữa.  
+`case` rỗng xếp chồng = OR (`case 1: case 2:`). Pattern `case int n when n > 0:` — `when` contextual. Không fall-through có lệnh như C.
 
 ---
 
@@ -222,7 +256,8 @@ catch (Exception ex)
 ```
 
 **Ghi chú:**  
-Tránh `catch (Exception) { }` bỏ trống – rất khó debug. Nên log hoặc wrap thành exception có ý nghĩa cụ thể.
+Tránh `catch (Exception) { }` bỏ trống – rất khó debug. Nên log hoặc wrap thành exception có ý nghĩa cụ thể.  
+Thứ tự: kiểu cụ thể trước, `Exception` sau. Filter `when` chạy **trước** khi coi là bắt — [exceptions.md](exceptions.md). Không `catch` `StackOverflowException` / fatal.
 
 ---
 
@@ -239,7 +274,8 @@ bool isLetter = char.IsLetter(c); // true
 ```
 
 **Ghi chú:**  
-Đừng giả định “1 ký tự người dùng = 1 `char`”; với Unicode phức tạp nên dùng API trên `string` hoặc `System.Text.Rune`.
+Đừng giả định “1 ký tự người dùng = 1 `char`”; với Unicode phức tạp nên dùng API trên `string` hoặc `System.Text.Rune`.  
+`char` là UTF-16 code unit. Literal `'A'`. `char.IsDigit` ≠ “chữ số mọi script” lúc parse `int`. Arithmetic `char` promote `int`.
 
 ---
 
@@ -260,7 +296,8 @@ checked
 ```
 
 **Ghi chú:**  
-Dùng ở chỗ cần đảm bảo không overflow (tài chính, số quan trọng). Có thể bật mặc định trong project và dùng `unchecked` cho các chỗ đặc biệt.
+Dùng ở chỗ cần đảm bảo không overflow (tài chính, số quan trọng). Có thể bật mặc định trong project và dùng `unchecked` cho các chỗ đặc biệt.  
+`checked` expression `checked(x + y)` khác khối. `decimal` không dùng checked overflow như `int`. Constant overflow lúc compile vẫn lỗi kể cả unchecked context một số case.
 
 ---
 
@@ -283,7 +320,8 @@ public class Person
 ```
 
 **Ghi chú:**  
-Class là reference type → được cấp phát trên heap, truyền qua reference. Với type nhỏ, immutable, nhạy hiệu năng, cân nhắc `struct` hoặc `record struct`.
+Class là reference type → được cấp phát trên heap, truyền qua reference. Với type nhỏ, immutable, nhạy hiệu năng, cân nhắc `struct` hoặc `record struct`.  
+`class` vs `record class`: record thêm equality/`with`. `sealed` mặc định khi không cần inherit. C# 15 `closed` preview: [oop.md](oop.md). `static class` không instance.
 
 ---
 
@@ -300,7 +338,8 @@ private const string AppName = "MyApp";
 ```
 
 **Ghi chú:**  
-Thay đổi giá trị `public const` trong library không tự update cho code client đã build; cần rebuild client. Với giá trị có thể thay đổi, dùng `static readonly`.
+Thay đổi giá trị `public const` trong library không tự update cho code client đã build; cần rebuild client. Với giá trị có thể thay đổi, dùng `static readonly`.  
+Chỉ cho phép giá trị compile-time (`int`, `string`, `enum`…). Không `const DateTime`. `const` local trong method cũng inline.
 
 ---
 
@@ -319,7 +358,8 @@ foreach (var item in items)
 }
 ```
 
-**Ghi chú:** **C# 15 preview** — `continue outer;` với nhãn vòng ngoài: [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).
+**Ghi chú:** **C# 15 preview** — `continue outer;` với nhãn vòng ngoài: [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).  
+`continue` chỉ vòng **đang chạy**, không phải `switch`. Trong `foreach` nhảy tới phần tử kế. Lạm dụng `continue` + điều kiện phức = khó đọc hơn early-filter LINQ/`if` ngược.
 
 ---
 
@@ -337,7 +377,8 @@ decimal total = price * qty; // 59.97m
 ```
 
 **Ghi chú:**  
-Chậm hơn `double`; không lý tưởng cho tính toán khoa học nặng.
+Chậm hơn `double`; không lý tưởng cho tính toán khoa học nặng.  
+Scale 28–29 chữ số thập phân; literal `m`. JSON/`double` round-trip có thể mất `decimal`. Không `NaN`. Arithmetic `decimal` không SIMD như `double`.
 
 ---
 
@@ -356,6 +397,9 @@ string? s = default;  // null
 
 T Create<T>() => default!;
 ```
+
+**Ghi chú:**  
+`default` trên `switch` statement ≠ `default` expression. `default` của `string` / class là `null`; của `int` là `0` — hay nhầm với `FirstOrDefault`. Generic: `default!` chỉ tắt warning NRT, không tạo instance.
 
 ---
 
@@ -381,7 +425,8 @@ public class Worker
 ```
 
 **Ghi chú:**  
-Trong code hiện đại, thường dùng `Action<>`, `Func<>` thay vì tự khai báo delegate, trừ khi cần type public có tên rõ ràng.
+Trong code hiện đại, thường dùng `Action<>`, `Func<>` thay vì tự khai báo delegate, trừ khi cần type public có tên rõ ràng.  
+`delegate` multicast (`+`); `event` hạn chế truy cập. `unmanaged` function pointer (`delegate*`) khác — [memory-spans.md](memory-spans.md). Covariance/contravariance `in`/`out` trên generic delegate.
 
 ---
 
@@ -402,6 +447,9 @@ do
 } while (i < 3);
 ```
 
+**Ghi chú:**  
+Dùng khi body **phải** chạy trước khi biết điều kiện (prompt, đọc stream lần đầu). Loop vô hạn: `while (true)` phổ biến hơn `do` + `true`. Đừng quên `;` sau `while (...)`.
+
 ---
 
 ## 18. `double`
@@ -417,7 +465,8 @@ Console.WriteLine(x); // 0.30000000000000004
 ```
 
 **Ghi chú:**  
-Luôn tồn tại sai số floating-point; khi so sánh nên dùng epsilon, không so sánh trực tiếp bằng `==` cho số thực.
+Luôn tồn tại sai số floating-point; khi so sánh nên dùng epsilon, không so sánh trực tiếp bằng `==` cho số thực.  
+Literal không hậu tố = `double`. `NaN != NaN`; dùng `double.IsNaN`. Tiền tệ: `decimal`. `float`/`double` không `checked` overflow (ra `Infinity`).
 
 ---
 
@@ -436,6 +485,9 @@ else if (score >= 80)
 else
     grade = "C";
 ```
+
+**Ghi chú:**  
+`else` gắn với `if` gần nhất — thiếu `{}` dễ “else dính nhầm”. C# không có `elif`; chuỗi `else if`. Nhánh rỗng: thường pattern `if` ngược hoặc early `return` sạch hơn.
 
 ---
 
@@ -457,7 +509,8 @@ public enum OrderStatus
 ```
 
 **Ghi chú:**  
-Enum vẫn là số bên dưới ⇒ cast được giá trị không hợp lệ; nếu nhận từ bên ngoài cần validate.
+Enum vẫn là số bên dưới ⇒ cast được giá trị không hợp lệ; nếu nhận từ bên ngoài cần validate.  
+`[Flags]` + bit. Underlying mặc định `int`; có thể `byte`/`long`. `ToString`/`Parse` culture. Không dùng enum cho tập giá trị hay đổi (thêm member = breaking binary nếu số đổi).
 
 ---
 
@@ -481,7 +534,8 @@ public class Button
 ```
 
 **Ghi chú:**  
-Cẩn thận memory leak nếu subscriber không hủy đăng ký ở các scenario sống lâu (winforms, WPF, v.v.).
+Cẩn thận memory leak nếu subscriber không hủy đăng ký ở các scenario sống lâu (winforms, WPF, v.v.).  
+`event` chỉ cho phép `+=`/`-=` từ ngoài (không `Invoke` trừ cùng type). `async void` handler: [async.md](async.md). Field-like event không thread-safe tuyệt đối lúc subscribe — thường đủ UI.
 
 ---
 
@@ -505,6 +559,9 @@ public readonly struct Meter
 Meter m = (Meter)5.0;
 double d = (double)m;
 ```
+
+**Ghi chú:**  
+`explicit` khi chuyển kiểu **có thể mất thông tin** hoặc không hiển nhiên — bắt caller viết `(T)`. Cặp với `implicit` (§34): quá nhiều implicit làm overload rối. User-defined conversion phải `static` trong chính type nguồn hoặc đích.
 
 ---
 
@@ -535,7 +592,8 @@ public static class StringExtensions
 
 **Ghi chú:**  
 - Extension method cổ điển (`this T`) vẫn hợp lệ và tương thích nhị phân với extension members.  
-- Chi tiết thiết kế & `this`: [methods.md — `this` và extension method](methods.md#12-this-và-extension-method); property/`field` liên quan OOP: [oop.md](oop.md).
+- Chi tiết thiết kế & `this`: [methods.md — `this` và extension method](methods.md#12-this-và-extension-method); property/`field` liên quan OOP: [oop.md](oop.md).  
+- Indexer extension: **C# 15 preview**, không phải C# 14 `extension` block method. Không dùng `extension` làm tên type trừ khi contextual slot cho phép.
 
 ---
 
@@ -556,6 +614,9 @@ class NativeMethods
 }
 ```
 
+**Ghi chú:**  
+`extern` không có body C#. Cần `DllImport` / `LibraryImport` (source gen, .NET 7+) cho native. Sai calling convention / charset → fail lúc chạy, không lúc compile. `extern alias` (cú pháp khác) phân hai assembly cùng identity — hiếm.
+
 ---
 
 ## 25. `false`
@@ -572,6 +633,9 @@ if (!ok)
     Console.WriteLine("Not OK");
 }
 ```
+
+**Ghi chú:**  
+Hằng, không phải biến. Overload `operator false` (cặp `true`) cho type kiểu DB bool — hiếm; đừng nhầm với `false` literal. `default(bool)` là `false`.
 
 ---
 
@@ -601,6 +665,7 @@ public int Score
 - Chỉ hợp lệ trong `get`/`set`/`init` của property dùng auto-backing-field (không trộn với field `_msg` tự viết trên cùng property).
 - Giữ được cú pháp auto-property + logic validate/transform ngắn.
 - Chi tiết property / OOP: [oop.md — Truy cập backing field (C#14)](oop.md#52-truy-cập-backing-field-c14).
+- `field` contextual: `int field = 1;` ngoài accessor vẫn là identifier. Trùng tên với property `field` trong cùng accessor = warning/lỗi tùy version — đổi tên param/`value`.
 
 ---
 
@@ -625,7 +690,8 @@ finally
 ```
 
 **Ghi chú:**  
-Cẩn thận không ném exception mới từ `finally` (dễ che mất exception gốc). Hiện đại hơn là dùng `using` / `using var`.
+Cẩn thận không ném exception mới từ `finally` (dễ che mất exception gốc). Hiện đại hơn là dùng `using` / `using var`.  
+`finally` chạy khi `return` trong `try`, **không** đảm bảo với `Environment.Exit` / `FailFast`. `async` + `finally`: [async.md](async.md) / [exceptions.md](exceptions.md).
 
 ---
 
@@ -648,6 +714,9 @@ unsafe
 }
 ```
 
+**Ghi chú:**  
+Chỉ trong `unsafe`. Pin xong khối `fixed` thì pointer **hết hạn** — đừng lưu `p` ra ngoài. Buffer lớn: `stackalloc`/`Span` hoặc heap, không `fixed` mảng rồi quên lifetime. `fixed` statement khác `fixed` buffer trong `struct` (`fixed byte buf[16]`).
+
 ---
 
 ## 29. `float`
@@ -660,6 +729,9 @@ unsafe
 ```csharp
 float f = 1.23f;
 ```
+
+**Ghi chú:**  
+Literal phải `f`/`F` — `1.23` là `double`, gán vào `float` cần convert. Sai số nặng hơn `double`; GPU/interop hay dùng. So sánh: epsilon, không `==`. Tiền tệ: `decimal`.
 
 ---
 
@@ -677,6 +749,9 @@ for (int i = 0; i < items.Length; i++)
 }
 ```
 
+**Ghi chú:**  
+Phạm vi biến `i` là cả câu `for`. Closure trên `i` rồi enumerate sau (LINQ/deferred) hay bắt **giá trị cuối** — copy local trong vòng. `for` trên `Count` collection bị mutate: undefined. Index thuần: `for`; chỉ đọc phần tử: `foreach`.
+
 ---
 
 ## 31. `foreach`
@@ -692,6 +767,9 @@ foreach (var item in items)
     Console.WriteLine(item);
 }
 ```
+
+**Ghi chú:**  
+`item` **không** gán lại được (là iteration variable). Sửa list đang `foreach` → `InvalidOperationException` (hầu hết collection BCL). `await foreach` trên `IAsyncEnumerable`. `ref foreach` / `Span` — [memory-spans.md](memory-spans.md) / [statements.md](statements.md).
 
 ---
 
@@ -715,7 +793,8 @@ switch (option)
 ```
 
 **Ghi chú:**  
-Thường được xem là “code smell”, trừ vài pattern rất hiếm (ví dụ thoát lồng nhiều vòng).
+Thường được xem là “code smell”, trừ vài pattern rất hiếm (ví dụ thoát lồng nhiều vòng).  
+**C# 15 preview** có `break outer` — ưu tiên hơn `goto` cho vòng lồng. `goto case` trong `switch` vẫn hợp lệ. Không `goto` xuyên `finally` theo cách bỏ cleanup.
 
 ---
 
@@ -730,6 +809,9 @@ Thường được xem là “code smell”, trừ vài pattern rất hiếm (v�
 if (user is null)
     throw new ArgumentNullException(nameof(user));
 ```
+
+**Ghi chú:**  
+Điều kiện phải `bool` — không “if (ptr)” như C. Pattern: `if (obj is string s)`. Nhiều nhánh: `switch` / switch expression. Early-return giảm `else` lồng.
 
 ---
 
@@ -752,6 +834,9 @@ public readonly struct Meter
 Meter m = 5.0; // implicit
 ```
 
+**Ghi chú:**  
+Chỉ khi conversion **an toàn / hiển nhiên** (mất thông tin → `explicit`). Chuỗi implicit làm overload resolution bất ngờ. Không định nghĩa cả hai chiều implicit vòng. BCL: `int` → `long` implicit; ngược lại phải cast.
+
 ---
 
 ## 35. `in`
@@ -771,6 +856,9 @@ public static double Distance(in Point a, in Point b)
 }
 ```
 
+**Ghi chú:**  
+`in` trên tham số = `ref readonly` (caller không cần `in` lúc gọi, compiler có thể copy nếu type không `readonly struct`). `foreach (var x in xs)` — `in` ở đây **không** phải modifier tham số. Generic: `in T` = contravariance trên interface/delegate.
+
 ---
 
 ## 36. `int`
@@ -783,6 +871,9 @@ public static double Distance(in Point a, in Point b)
 ```csharp
 int count = 42;
 ```
+
+**Ghi chú:**  
+Alias `System.Int32`. Literal không hậu tố thường là `int` nếu vừa. Overflow mặc định **unchecked** (wrap); `checked` khi cần. `int?` / `default` = 0 — phân biệt với “thiếu giá trị” khi parse.
 
 ---
 
@@ -800,6 +891,9 @@ public interface ILogger
 }
 ```
 
+**Ghi chú:**  
+Không có field instance (trừ default interface members C# 8+ — cẩn thận DIAM). Class implement mọi member hoặc `abstract`. `interface` cho hợp đồng; `abstract class` khi có state/behavior chung. Generic variance: `in`/`out` trên `T`.
+
 ---
 
 ## 38. `internal`
@@ -812,6 +906,9 @@ public interface ILogger
 ```csharp
 internal class InternalHelper { }
 ```
+
+**Ghi chú:**  
+Mặc định thành viên class là `private`; type top-level không modifier = `internal`. Test: `InternalsVisibleTo`. `internal` ≠ `file` (C# 11, cùng file). `protected internal` = union (protected **hoặc** same-assembly).
 
 ---
 
@@ -830,6 +927,9 @@ if (obj is string s && s.Length > 0)
     Console.WriteLine(s);
 }
 ```
+
+**Ghi chú:**  
+`is` không ném; thất bại → `false` (khác cast). `as` + null-check ≈ `is T t` (C# 7+). Pattern list/relational: [statements.md](statements.md) / [operators.md](operators.md). `is null` không gọi `==` overloaded — an toàn hơn `== null` trên type có operator.
 
 ---
 
@@ -853,6 +953,9 @@ public void Increment()
 }
 ```
 
+**Ghi chú:**  
+`lock` trên `this` / `typeof(T)` / string interned → deadlock với code ngoài. Dùng `private readonly object _sync = new()`. Không `await` trong `lock`. Async: `SemaphoreSlim`. Chi tiết: [threading.md](threading.md).
+
 ---
 
 ## 41. `long`
@@ -865,6 +968,9 @@ public void Increment()
 ```csharp
 long big = 1_000_000_000_000L;
 ```
+
+**Ghi chú:**  
+Literal lớn hơn `int.MaxValue` cần `L` hoặc kiểu đích `long`. `ticks` / file size hay dùng `long`. `long` → `int` phải explicit (mất dữ liệu). JSON/`Number` lớn: kiểm tra bound.
 
 ---
 
@@ -881,6 +987,9 @@ namespace MyApp.Core
     public class Service { }
 }
 ```
+
+**Ghi chú:**  
+File-scoped `namespace MyApp;` (C# 10) — một namespace/file, ít indent. Nested namespace ≠ folder bắt buộc, nhưng convention khớp. TLS: **không** bọc statements trong namespace cùng file — [main-function.md](main-function.md). `using` không phải namespace member.
 
 ---
 
@@ -914,6 +1023,9 @@ public class Factory<T> where T : new()
 }
 ```
 
+**Ghi chú:**  
+Ba nghĩa: (1) `new T()`, (2) hide member, (3) `where T : new()`. `new` hide **không** polymorphic — gọi qua base vẫn base; muốn override dùng `virtual`. Constraint `new()` loại `ref struct` / type không có ctor public parameterless. Target-typed `new()` (C# 9): `List<int> x = new();`.
+
 ---
 
 ## 44. `null`
@@ -931,6 +1043,9 @@ if (name is null)
 }
 ```
 
+**Ghi chú:**  
+NRT: `string?` vs `string`. `null` không gán vào non-nullable value type (`int` — dùng `int?`). So sánh: `is null` / `is not null`. `Nullable<T>.HasValue`. `default` reference = `null`.
+
 ---
 
 ## 45. `object`
@@ -944,6 +1059,9 @@ if (name is null)
 object o = 42;   // boxing
 int x = (int)o;  // unboxing
 ```
+
+**Ghi chú:**  
+Boxing `int` → `object` cấp phát heap; hot-path tránh. Unboxing sai kiểu → `InvalidCastException`. Mọi type (kể cả `struct`) kế thừa chuỗi API `object` (`Equals`, `GetHashCode`) — override cặp khi làm key.
 
 ---
 
@@ -966,6 +1084,9 @@ public readonly struct Money
 }
 ```
 
+**Ghi chú:**  
+Overload `==` thì overload `!=` và thường `Equals`/`GetHashCode`. Conversion: `implicit`/`explicit operator`. Compound assignment C# 14: [operators.md](operators.md). Không overload `&&` trực tiếp (đi qua `true`/`false`/`&`).
+
 ---
 
 ## 47. `out`
@@ -981,6 +1102,9 @@ if (int.TryParse("123", out int value))
     Console.WriteLine(value);
 }
 ```
+
+**Ghi chú:**  
+Caller không cần khởi tạo biến `out`. `out var` / `out int x` inline (C# 7). Generic: `out T` = covariance. Đừng dùng `out` cho API mới nếu có thể trả tuple / `bool Try…`. `out` khác `ref` (phải ghi trước return).
 
 ---
 
@@ -1001,6 +1125,9 @@ void Log(params string[] messages)
 Log("A", "B", "C");
 ```
 
+**Ghi chú:**  
+Chỉ **một** `params`, phải **cuối** danh sách. C# 13+/14: `params` collections (`params ReadOnlySpan<T>`, `params IEnumerable<T>`) — [methods.md §11](methods.md#11-params). Gọi `Log(array)` không spread thêm lớp. Overload `params` vs cố định: compiler ưu tiên cố định.
+
 ---
 
 ## 49. `private`
@@ -1017,6 +1144,9 @@ public class User
 }
 ```
 
+**Ghi chú:**  
+Mặc định member class/struct/record. Nested type `private` chỉ outer thấy. Không có “private cho file” — dùng `file` (C# 11) cho type. Property `private set` vẫn `get` public.
+
 ---
 
 ## 50. `protected`
@@ -1031,6 +1161,9 @@ public class Base
 }
 ```
 
+**Ghi chú:**  
+Derived **khác assembly** vẫn thấy `protected`. `private protected` = derived **cùng** assembly. `protected internal` rộng hơn. Dùng cho hook `OnXxx`, không phải API public.
+
 ---
 
 ## 51. `public`
@@ -1041,6 +1174,9 @@ public class Base
 ```csharp
 public class ApiClient { }
 ```
+
+**Ghi chú:**  
+Public type trong library = surface NuGet — breaking khi đổi. Minimal API: thu hẹp `public`. Top-level type không ghi modifier = `internal`, không phải `public`.
 
 ---
 
@@ -1058,6 +1194,9 @@ public class Config
 }
 ```
 
+**Ghi chú:**  
+`readonly struct` / `readonly` member (C# 7.2/8): method không mutate. `init` property ≠ `readonly` field. `ref readonly` trả về. Static `readonly` chạy lúc type init — khác `const` (inline IL).
+
 ---
 
 ## 53. `ref`
@@ -1072,6 +1211,9 @@ void Swap(ref int a, ref int b)
 }
 ```
 
+**Ghi chú:**  
+Caller phải `ref` lúc gọi. `ref struct` (`Span<T>`) không hộp, không lên heap. `ref` local/return: lifetime — [memory-spans.md](memory-spans.md). `ref` khác `out` (đọc/ghi vs phải ghi). C# 13: `allows ref struct`.
+
 ---
 
 ## 54. `return`
@@ -1083,6 +1225,9 @@ void Swap(ref int a, ref int b)
 int Double(int x) => x * 2;
 ```
 
+**Ghi chú:**  
+`void` method: `return;` không giá trị. TLS: `return n` suy `int` Main — [main-function.md](main-function.md). `ref return`: `return ref field`. Iterator: `yield return` ≠ `return` (kết thúc iterator = `yield break` / hết method).
+
 ---
 
 ## 55. `sbyte`
@@ -1093,6 +1238,9 @@ int Double(int x) => x * 2;
 ```csharp
 sbyte x = -5;
 ```
+
+**Ghi chú:**  
+Không CLS-compliant — API public nên `int`/`byte`. Phép toán promote lên `int`. Interop/binary protocol mới gặp. Overflow 127+1 → wrap nếu unchecked.
 
 ---
 
@@ -1124,6 +1272,9 @@ sealed class FinalType : BaseType {}
 short s = 10;
 ```
 
+**Ghi chú:**  
+Promote lên `int` khi tính toán — gán lại cần cast. Interop/`Int16` / binary. `short` + `short` → `int`. Ít dùng hơn `int` trừ khi packing memory.
+
 ---
 
 ## 58. `sizeof`
@@ -1135,6 +1286,9 @@ short s = 10;
 int size = sizeof(int); // 4
 ```
 
+**Ghi chú:**  
+`sizeof` kiểu known-unmanaged: compile-time. `sizeof(T)` generic cần `unsafe` hoặc `Unsafe.SizeOf<T>`. Không gồm padding “ý nghĩa” marshal — `Marshal.SizeOf` khác. Reference type: không `sizeof(string)` theo nghĩa độ dài chuỗi.
+
 ---
 
 ## 59. `stackalloc`
@@ -1145,6 +1299,9 @@ int size = sizeof(int); // 4
 ```csharp
 Span<int> span = stackalloc int[100];
 ```
+
+**Ghi chú:**  
+Stack — đừng `stackalloc` theo input user không bound (stack overflow). C# 7.2+: `Span<T>` không cần `unsafe`. Lifetime kết thúc khi method return; đừng trả `Span` trỏ stack ra ngoài. Chi tiết: [memory-spans.md](memory-spans.md).
 
 ---
 
@@ -1160,6 +1317,9 @@ public static class MathHelper
 }
 ```
 
+**Ghi chú:**  
+`static class` không instance, không kế thừa. Local function/lambda `static` (C# 8/9) cấm capture. `using static`. C# 11: `static abstract` trên interface (generic math). `Main` phải `static`.
+
 ---
 
 ## 61. `string`
@@ -1171,6 +1331,9 @@ public static class MathHelper
 string s = "Hello";
 s += " world"; // tạo string mới
 ```
+
+**Ghi chú:**  
+Immutable — `+=` trong vòng lặp = nhiều alloc; dùng `StringBuilder` / interpolation. So sánh: `StringComparison` rõ, không dựa culture mặc định. `string?` NRT. Alias `String` cùng kiểu.
 
 ---
 
@@ -1187,6 +1350,9 @@ public readonly struct Point
     public Point(int x, int y) => (X, Y) = (x, y);
 }
 ```
+
+**Ghi chú:**  
+Value type: copy khi gán/truyền (trừ `ref`/`in`). Mutate copy ≠ mutate gốc — ưu tiên `readonly struct`. `struct` không tham số ctor mặc định luôn có (C# 10+ có thể định nghĩa parameterless). `ref struct`: [memory-spans.md](memory-spans.md). `record struct`: [typesystem.md](typesystem.md).
 
 ---
 
@@ -1206,6 +1372,9 @@ switch (day)
         break;
 }
 ```
+
+**Ghi chú:**  
+Statement: mỗi `case` phải `break`/`return`/`goto` (fall-through C bị cấm, trừ empty case xếp chồng). Expression `day switch { … }` (C# 8): exhaustive hơn. Pattern: [statements.md](statements.md). **C# 15 preview:** labeled `break` vòng — không phải `switch`.
 
 ---
 
@@ -1229,6 +1398,9 @@ public static class StringExtensions
 }
 ```
 
+**Ghi chú:**  
+Ctor chain: `this(...)`. Extension cổ điển: `this T` tham số đầu. Tránh `lock (this)`. Primary ctor / capture `this` trong lambda: lifetime. `this` không dùng trong `static` member (trừ extension receiver).
+
 ---
 
 ## 65. `throw`
@@ -1240,6 +1412,9 @@ public static class StringExtensions
 if (id <= 0)
     throw new ArgumentOutOfRangeException(nameof(id));
 ```
+
+**Ghi chú:**  
+`throw;` trong `catch` giữ stack; `throw ex` reset. Expression: `?? throw`. Không dùng exception cho control flow thường. Chi tiết: [exceptions.md](exceptions.md). `nameof` trên param: refactor-safe.
 
 ---
 
@@ -1254,6 +1429,9 @@ while (true)
     if (ShouldStop()) break;
 }
 ```
+
+**Ghi chú:**  
+Hằng. Cặp `operator true`/`false` cho type custom (SQL-style). `true` literal kiểu `bool`. `while (true)` + `break` hợp lệ; `CancellationToken` sạch hơn loop vô hạn server.
 
 ---
 
@@ -1273,6 +1451,9 @@ catch (Exception ex)
 }
 ```
 
+**Ghi chú:**  
+Cần ít nhất `catch` hoặc `finally`. Filter: `catch (Exception ex) when (ex.InnerException is IOException)`. `try` không làm “rẻ” — đừng bọc hot-path. [exceptions.md](exceptions.md).
+
 ---
 
 ## 68. `typeof`
@@ -1285,6 +1466,9 @@ Type t1 = typeof(string);
 Type t2 = typeof(List<int>);
 ```
 
+**Ghi chú:**  
+`typeof` bind compile-time; `GetType()` runtime (có thể derived). `typeof(List<>)` unbound — C# 14 `nameof` unbound generic liên quan [operators.md §13](operators.md). Không `typeof` trên biến (`x.GetType()`). Open generic: `typeof(Dictionary<,>)`.
+
 ---
 
 ## 69. `uint`
@@ -1296,6 +1480,9 @@ Type t2 = typeof(List<int>);
 uint u = 10u;
 ```
 
+**Ghi chú:**  
+Không CLS-compliant — API public nên `int` nếu đủ range. Hậu tố `u`/`U`. Mix signed/unsigned → promote bất ngờ (so sánh `< 0` với `uint` luôn false sau convert). Bit flags 32-bit không âm.
+
 ---
 
 ## 70. `ulong`
@@ -1306,6 +1493,9 @@ uint u = 10u;
 ```csharp
 ulong u = 10UL;
 ```
+
+**Ghi chú:**  
+Không CLS; API public thường `long`. Hậu tố `UL`. Không âm — trừ `ulong` wrap. Mix `long`/`ulong` dễ warning signed/unsigned.
 
 ---
 
@@ -1321,6 +1511,9 @@ unchecked
 }
 ```
 
+**Ghi chú:**  
+Mặc định project thường unchecked. Cặp với `checked` (§10) — bật checked toàn project rồi `unchecked` chỗ bit-twiddle / hash. `unchecked((int)0xFFFFFFFF)` cast bit pattern.
+
 ---
 
 ## 72. `unsafe`
@@ -1335,6 +1528,9 @@ unsafe void Foo(int* p)
 }
 ```
 
+**Ghi chú:**  
+Cần `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`. Pointer không GC-safe ngoài `fixed`. Ưu tiên `Span<T>` / `ref` trước khi `unsafe`. [memory-spans.md](memory-spans.md). AOT/trim: `unsafe` vẫn compile nhưng không “thêm an toàn”.
+
 ---
 
 ## 73. `ushort`
@@ -1345,6 +1541,9 @@ unsafe void Foo(int* p)
 ```csharp
 ushort u = 10;
 ```
+
+**Ghi chú:**  
+Không CLS. Promote `int` khi tính. Port/length 16-bit, BMP Unicode code unit ≠ `char` semantics đầy đủ (surrogate). Overflow wrap nếu unchecked.
 
 ---
 
@@ -1362,6 +1561,9 @@ using var stream = File.OpenRead("data.txt");
 // dùng stream...
 ```
 
+**Ghi chú:**  
+Ba vai: `using Ns;` / `global using` / `using static` (C# 6/10) và `using` statement/`using var` (IDisposable). `await using` cho `IAsyncDisposable`. File-scoped không liên quan `using`. [exceptions.md](exceptions.md) · implicit usings: [projects-packages.md](projects-packages.md).
+
 ---
 
 ## 75. `virtual`
@@ -1376,6 +1578,9 @@ public class Base
 }
 ```
 
+**Ghi chú:**  
+Chỉ class (không `struct` instance virtual). `override` trên derived; thiếu `override` + cùng chữ ký = hide (`new`) — bug phổ biến. `abstract` = virtual không body. `sealed override` chặn lớp cháu.
+
 ---
 
 ## 76. `void`
@@ -1387,6 +1592,9 @@ public class Base
 void Log(string message) => Console.WriteLine(message);
 ```
 
+**Ghi chú:**  
+Không phải kiểu giá trị — không `var x = void`. `Task`/`Task<int>` khác `void` (async). `async void` chỉ event handler — [async.md](async.md). `Main` `void` → exit 0 trừ `ExitCode`. Pointer: `void*`.
+
 ---
 
 ## 77. `volatile`
@@ -1397,6 +1605,9 @@ void Log(string message) => Console.WriteLine(message);
 ```csharp
 public volatile bool _stopped;
 ```
+
+**Ghi chú:**  
+**Không** thay `lock` / `Interlocked` cho read-modify-write (`flag++` vẫn race). Chỉ visibility, không atomicity rộng. `volatile` trên `int`/`reference`; không `long` an toàn mọi nền (dùng `Interlocked`). Hầu hết code mới: `lock`, `volatile` field cờ stop đơn giản, hoặc `CancellationToken`. [threading.md](threading.md).
 
 ---
 
@@ -1412,6 +1623,9 @@ while (i < 10)
     Console.WriteLine(i++);
 }
 ```
+
+**Ghi chú:**  
+Điều kiện kiểm tra **trước** body (khác `do`). `while (true)` cần `break`/`return`/cancel. Collection: `foreach` rõ hơn index. **C# 15 preview:** `break outer` trên vòng có nhãn.
 
 ---
 
@@ -1460,33 +1674,54 @@ public record class Closed : GateState;
 public record class Open(float Percent) : GateState;
 ```
 
-**Ghi chú:** Khác `union` (ghép kiểu không cần thừa kế). Không thuộc baseline C# 14.
+**Ghi chú:** Khác `union` (ghép kiểu không cần thừa kế). Không thuộc baseline C# 14.  
+Mọi derived phải **cùng assembly**; library public `closed` hạn chế consumer extend — đúng ý exhaustiveness, sai ý plugin. Preview: [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
 
 ---
 
 ## 81. Contextual keywords & alias (không đủ chỗ từng mục)
 
-Các token dưới **không** luôn reserved; chỉ là keyword trong ngữ cảnh. Chi tiết nằm ở topic file.
+Các token dưới **không** luôn reserved; chỉ là keyword trong ngữ cảnh (chỗ khác có thể là tên biến). Chi tiết đầy đủ nằm ở topic file — bảng chỉ **một dòng ví dụ** để nhận diện. Năm token hay tra nhất: **`record`**, **`async`/`await`**, **`yield`**, **`var`**, **`nameof`**.
 
-| Token | Vai trò ngắn | Topic |
-|-------|----------------|-------|
-| `record` | `record class` / `record struct` | [oop.md](oop.md) · [typesystem.md](typesystem.md) §8 |
-| `required` | member bắt buộc init | [oop.md](oop.md) §1.8 / §5.4 |
-| `file` | access modifier cùng file (C# 11) | [oop.md](oop.md) §1.3 |
-| `scoped` | lifetime `ref`/`ref struct` (C# 11) | [statements.md](statements.md) §4.6 · [memory-spans.md](memory-spans.md) |
-| `when` | filter `catch` / pattern | [exceptions.md](exceptions.md) · [statements.md](statements.md) |
-| `with` | `with { }` copy record; `with(...)` collection args **preview** | [typesystem.md](typesystem.md) · [collections-generics.md](collections-generics.md) |
-| `and` / `or` / `not` | pattern combinator (C# 9) | [operators.md](operators.md) · [statements.md](statements.md) |
-| `async` / `await` | bất đồng bộ | [async.md](async.md) |
-| `yield` | iterator | [methods.md](methods.md) §13 |
-| `var` | suy luận kiểu local | [typesystem.md](typesystem.md) §11 |
-| `nameof` | tên symbol (C# 14: unbound generic) | [operators.md](operators.md) §13 |
-| `nint` / `nuint` | integer kích thước pointer | [typesystem.md](typesystem.md) §3.3 |
-| `unmanaged` | generic constraint | [typesystem.md](typesystem.md) §13 |
-| `allows` | `allows ref struct` (C# 13) | [typesystem.md](typesystem.md) §13 · [memory-spans.md](memory-spans.md) |
-| `dynamic` | DLR binding | [typesystem.md](typesystem.md) §4 |
+| Token | Vai trò ngắn | Ví dụ | Topic |
+|-------|----------------|-------|-------|
+| `record` | `record class` / `record struct` — value-ish equality, `with` | `public record Person(string Name);` | [oop.md](oop.md) · [typesystem.md](typesystem.md) §8 |
+| `required` | member bắt buộc init (C# 11) | `public required string Name { get; init; }` | [oop.md](oop.md) §1.8 / §5.4 |
+| `file` | access modifier cùng file (C# 11) | `file class HiddenHelper { }` | [oop.md](oop.md) §1.3 |
+| `scoped` | lifetime `ref`/`ref struct` (C# 11) | `void F(scoped ref Span<int> s)` | [statements.md](statements.md) §4.6 · [memory-spans.md](memory-spans.md) |
+| `when` | filter `catch` / pattern | `catch (IOException ex) when (ex.HResult == 5)` | [exceptions.md](exceptions.md) · [statements.md](statements.md) |
+| `with` | copy record; `with(...)` collection **C# 15 preview** | `var p2 = p with { Name = "B" };` | [typesystem.md](typesystem.md) · [collections-generics.md](collections-generics.md) |
+| `and` / `or` / `not` | pattern combinator (C# 9) | `x is > 0 and < 10` | [operators.md](operators.md) · [statements.md](statements.md) |
+| `async` | đánh dấu method/lambda bất đồng bộ | `async Task RunAsync() { … }` | [async.md](async.md) |
+| `await` | chờ awaitable; TLS/async Main được | `var n = await http.GetStringAsync(url);` | [async.md](async.md) · [main-function.md](main-function.md) |
+| `yield` | iterator `yield return` / `yield break` | `yield return item;` | [methods.md](methods.md) §13 |
+| `var` | suy luận kiểu **local** (không phải field) | `var list = new List<int>();` | [typesystem.md](typesystem.md) §11 |
+| `nameof` | tên symbol; C# 14 unbound generic | `throw …(nameof(arg));` / `nameof(List<>)` | [operators.md](operators.md) §13 |
+| `nint` / `nuint` | integer kích thước pointer | `nint p = 0;` | [typesystem.md](typesystem.md) §3.3 |
+| `unmanaged` | generic constraint (blittable) | `where T : unmanaged` | [typesystem.md](typesystem.md) §13 |
+| `allows` | `allows ref struct` (C# 13) | `where T : allows ref struct` | [typesystem.md](typesystem.md) §13 · [memory-spans.md](memory-spans.md) |
+| `dynamic` | DLR binding lúc chạy | `dynamic d = json; d.Name` | [typesystem.md](typesystem.md) §4 |
+| `get` / `set` / `init` | accessor property; `init` chỉ lúc khởi tạo | `public int X { get; init; }` | [oop.md](oop.md) |
+| `add` / `remove` | accessor `event` tùy chỉnh | `public event Action E { add { } remove { } }` | [oop.md](oop.md) |
+| `value` | implicit param trong `set`/`init`/`add`/`remove` | `set => _x = value;` | [oop.md](oop.md) |
+| `partial` | type/member ghép nhiều file | `public partial class Program { }` | [oop.md](oop.md) · [main-function.md](main-function.md) |
+| `where` (constraint) | generic constraint | `where T : class, new()` | [typesystem.md](typesystem.md) |
+| `from` / `select` / `where` (query) | LINQ query syntax | `from x in xs where x > 0 select x` | [linq.md](linq.md) |
+| `let` / `join` / `group` / `into` | LINQ query | `group o by o.Id into g` | [linq.md](linq.md) |
+| `orderby` / `ascending` / `descending` | LINQ sort | `orderby x.Name descending` | [linq.md](linq.md) |
+| `on` / `equals` / `by` | LINQ `join` / `group` | `join o in orders on c.Id equals o.CustomerId` | [linq.md](linq.md) |
+| `alias` / `notnull` | `using` alias; constraint `notnull` | `where T : notnull` | [typesystem.md](typesystem.md) |
 
-`get` `set` `init` `add` `remove` `value` `partial` `where` `select` `from` `let` `join` `group` `into` `orderby` `ascending` `descending` `on` `equals` `by` — contextual accessor / query; xem [oop.md](oop.md) / [linq.md](linq.md).
+`extension` / `field` đã có mục 23–26 (C# 14). `closed` mục 80 (C# 15 preview). Preprocessor (`#if`, `#:`) **không** nằm bảng này — [preprocessor-directives.md](preprocessor-directives.md).
+
+### 81.1 Năm contextual hay tra (`record` / `async` / `await` / `yield` / `var` / `nameof`)
+
+- **`record`**: positional `record Person(string Name)` sinh ctor, `Deconstruct`, equality theo giá trị, `with`. `record class` reference; `record struct` value. Không phải reserved — `int record = 1` hợp lệ (đừng). Chi tiết [oop.md](oop.md) / [typesystem.md](typesystem.md) §8. C# 15 `closed record` preview.
+- **`async`**: modifier method/lambda/local function trả `Task`/`Task<T>`/`IAsyncEnumerable<T>`/`ValueTask`. **Không** biến `Main` thành CLR async — compiler sinh wrapper (§ `main-function`). `async void` chỉ event. [async.md](async.md).
+- **`await`**: chỉ trong `async` (hoặc TLS/`await foreach`). Unwrap `Task` exception. TLS: có `await` ⇒ entry `async Task`. Không `await` trong `lock`. [async.md](async.md) · [main-function.md](main-function.md) §7.
+- **`yield`**: `yield return` / `yield break` — iterator, deferred, không phải `return` giá trị method. Không `yield` trong `try` có `catch` (được `try`/`finally`). [methods.md](methods.md) §13 · [linq.md](linq.md) custom operators.
+- **`var`**: suy luận **biến local** (và range `foreach`). Không thay `field`/`parameter` (trừ lambda implicit). `var` ≠ `dynamic`. Kiểu phải xác định lúc compile (`var x = null` sai). [typesystem.md](typesystem.md) §11.
+- **`nameof`**: đổi tên symbol → string compile-time, không reflection. C# 14: `nameof(List<>)` unbound generic. Argument exception: `nameof(param)`. [operators.md](operators.md) §13.
 
 ---
 

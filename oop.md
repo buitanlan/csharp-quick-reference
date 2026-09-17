@@ -53,7 +53,7 @@
     - [7.3 Đăng ký/hủy \& phát sự kiện](#73-đăng-kýhủy--phát-sự-kiện)
     - [7.4 Event pattern .NET (`EventHandler<T>`)](#74-event-pattern-net-eventhandlert)
     - [7.5 Custom event accessor \& weak event](#75-custom-event-accessor--weak-event)
-    - [7.6 Best practices \& cảnh báo](#76-best-practices--cảnh-báo)
+    - [7.6 Best practices \& cảnh báo (event leak)](#76-best-practices--cảnh-báo--rò-rỉ-bộ-nhớ)
   - [8. Extension members (C\# 14)](#8-extension-members-c-14)
     - [8.1 `extension` block — cú pháp](#81-extension-block--cú-pháp)
     - [8.2 Extension method / property / static / operator](#82-extension-method--property--static--operator)
@@ -99,6 +99,47 @@ public class Counter
 - **`file`** (C# 11): member/type chỉ thấy trong **cùng file** — hữu ích generated code / helper không leak ra assembly.  
 - Quy tắc tổng quát: **thu hẹp phạm vi** nhất có thể (*least privilege*).
 
+| Modifier | Cùng class | Derived (cùng assembly) | Derived (khác assembly) | Cùng assembly | Khác assembly |
+|---|---|---|---|---|---|
+| `private` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `private protected` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `internal` | ✅ | ✅* | ❌ | ✅ | ❌ |
+| `protected` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `protected internal` | ✅ | ✅ | ✅ (derived) | ✅ | ❌ (trừ derived) |
+| `public` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `file` | chỉ **cùng file nguồn** — không phải phạm vi assembly | | | | |
+
+\*Derived cùng assembly thấy `internal` như mọi type cùng assembly.
+
+**`file` — semantics:** type/member `file` **không** visible từ file khác, kể cả cùng assembly, kể cả `InternalsVisibleTo`. Compiler đổi tên (mangled) để tránh đụng. Khác `internal`: `internal` vẫn dùng được từ file khác trong assembly.
+
+```csharp
+// File: JsonHelpers.cs — source generator / helper cục bộ
+file static class ParseCache
+{
+    internal static readonly Dictionary<string, int> Map = new();
+}
+
+file sealed class TinyReader(string json)
+{
+    public int Len => json.Length;
+}
+
+// File khác: ParseCache / TinyReader không tồn tại
+```
+
+**So sánh `file` vs `private` vs `internal`:**
+
+| | `private` | `file` | `internal` |
+|---|---|---|---|
+| Đặt trên type top-level | ❌ (type top-level không `private`) | ✅ | ✅ |
+| Thấy từ file khác cùng assembly | n/a | ❌ | ✅ |
+| Nested type | ✅ `private class Inner` | ✅ (hiếm cần) | ✅ |
+
+**Pitfall:** `file` không thay `internal` cho API module. Hai file cùng tên type `file class Foo` **được** (mỗi file một Foo). Đừng `public` nested trong `file` type — vô nghĩa với bên ngoài file.
+
+**Vì sao / Khi nào dùng `file`:** source generator, helper chỉ một file, tránh ô nhiễm IntelliSense assembly. Default type: `internal` (không ghi gì). Member: `private` trừ API.
+
 ### 1.4 Static vs instance
 
 ```csharp
@@ -135,6 +176,24 @@ public class HttpClientWrapper
 - Nếu **không** khai báo ctor nào → compiler sinh **default ctor** (không tham số).  
 - **Static constructor** không tham số, không access modifier, chạy 1 lần.
 
+**Semantics static ctor:** chạy trước member static đầu tiên / trước instance đầu tiên, thread-safe (beforefieldinit tùy IL). Exception trong static ctor → `TypeInitializationException` bọc, type **hỏng** cả process lifetime.
+
+```csharp
+public class Config
+{
+    public static readonly string Root;
+    static Config()
+    {
+        Root = Environment.GetEnvironmentVariable("ROOT")
+            ?? throw new InvalidOperationException("ROOT missing");
+    }
+}
+```
+
+**Pitfall:** static ctor nặng (IO) = startup chậm / deadlock nếu lấy lock. Primary ctor **không** thay static ctor.
+
+**Vì sao / Khi nào nhiều overload ctor:** tương thích, optional dependency. C# 12+ prefer primary + `: this(...)` cho chuỗi đơn giản.
+
 ### 1.6 Finalizer & IDisposable
 
 ```csharp
@@ -157,6 +216,12 @@ public class NativeHandleHolder : IDisposable
 
 - **Khuyến nghị dùng `IDisposable` + `using`/`await using`** thay vì trông chờ finalizer.  
 - Finalizer tốn kém; chỉ dùng khi giữ tài nguyên unmanaged.
+
+**Vì sao finalizer đắt:** object vào f-reachable queue, sống thêm ≥1 GC, thread finalizer. Sai `Dispose` mà dựa `~T()` → tài nguyên giữ lâu / không xác định lúc.
+
+**Pitfall:** `async` trong `Dispose` — dùng `IAsyncDisposable`. Gọi `Dispose` hai lần phải an toàn. `GC.SuppressFinalize` sau dispose managed path.
+
+**Vì sao / Khi nào `IDisposable`:** file, socket, `HttpClient` *handler*, `CancellationTokenSource` (nếu bạn tạo). Không implement “cho có” trên DTO.
 
 ### 1.7 Partial/Nested
 
@@ -320,6 +385,24 @@ Tránh trùng tên tham số primary ctor với property cùng kiểu nếu dễ
 
 **Gợi ý:** coi primary ctor như “dependency/state đầu vào” — **luôn** đưa vào `readonly` field / `get`-only/`init` property nếu muốn bất biến và API rõ.
 
+**5. Primary ctor + inheritance**
+
+Tham số primary ctor của class con **không** tự thành argument base trừ khi `: ClassBase(arg)` trên header (C# 12+ `class Derived(int x) : Base(x)`). Shadow tên với property base dễ đọc nhầm.
+
+```csharp
+public class Base(string name)
+{
+    public string Name { get; } = name;
+}
+
+public class Derived(string name, int n) : Base(name)
+{
+    public int N { get; } = n;
+}
+```
+
+**Vì sao / Khi nào dùng primary ctor:** DI (inject service), record-like class mỏng. Tránh khi logic khởi tạo nhiều nhánh/`if` — ctor thường + overload rõ hơn. Không dùng primary ctor chỉ để “ngắn” rồi capture lung tung.
+
 ---
 
 ## 2. Kế thừa & Đa hình
@@ -357,6 +440,16 @@ public class Derived : Base { public new void Log() => Console.WriteLine("Derive
 
 - `new` **ẩn** member cùng chữ ký ở base; chọn member nào phụ thuộc **tĩnh** loại tham chiếu.
 
+```csharp
+Base b = new Derived();
+b.Log(); // "Base" — ẩn, không ảo
+((Derived)b).Log(); // "Derived"
+```
+
+**So sánh `new` vs `override`:** `override` = dispatch runtime (đa hình). `new` = hai method độc lập, dễ bug khi gọi qua base. Tránh `new` trừ khi phải giữ binary compat.
+
+**Vì sao / Khi nào `new`:** hiếm — tên đụng BCL/`object.GetType` không override được. Mặc định `virtual`/`override`.
+
 ### 2.3 `base` & constructor chaining
 
 ```csharp
@@ -375,6 +468,17 @@ public class Dog : Animal
 - **Interface**: chỉ hợp đồng thành viên, 1 type có thể implement **nhiều** interface.
 - Ta dùng abstract class để tạo ra một bộ khung cho các lớp con, khi chúng ta có nhiều lớp với các thành phần giống nhau, mục đích để **dùng lại** code khai báo trong abstract class. Trong khi đó, interface đóng vai trò là một bản cam kết, một hợp đồng mà trong đó các lớp khác nhau có thể dựa trên đó để làm việc với nhau, một khi ta biết một class implement một interface, ta được đảm bảo rằng class này có chứa các hàm mà interface đó định nghĩa.
 - Từ góc độ OOP, abstract class đại diện cho lợi ích do tính **thừa kế** mang lại, trong khi đó interface hỗ trợ tính **trừu tượng**.
+
+**So sánh nhanh:**
+
+| | Abstract class | Interface |
+|---|---|---|
+| Field / ctor | ✅ | ❌ field instance (C# 8+ có static) |
+| Đa kế thừa | 1 class | nhiều interface |
+| Versioning | thêm method cụ thể dễ | thêm method phá implement — trừ DIM |
+| Exhaustiveness | `closed` (C# 15 preview) | không |
+
+**Vì sao / Khi nào abstract:** khung “is-a” + code dùng chung (`Stream`). Interface: capability (`IDisposable`, `IComparable<T>`). Cả hai: `abstract class` + interface tách hợp đồng.
 
 ### 2.5 Kiểm tra/cast kiểu (`is`/`as`/pattern matching)
 
@@ -418,6 +522,37 @@ string Label(GateState s) => s switch
 - Dùng khi mô hình trạng thái/ADT vẫn muốn kế thừa + shared members.  
 - Union vs closed: không chung base → `union`; có cây kế thừa + exhaustiveness → `closed`.
 
+**Semantics:** `closed` *đóng* tập subtype **trong assembly khai báo**. Compiler dùng danh sách đó cho exhaustiveness — giống union nhưng vẫn là OOP (virtual, field, `base`). Generic `T where T : GateState` trên closed type: một số preview cho phép switch exhaustive theo ràng buộc (Preview 7+ — xác nhận SDK).
+
+```csharp
+public closed abstract class Result;
+public sealed class Ok(int Value) : Result;
+public sealed class Err(string Message) : Result;
+
+string Show(Result r) => r switch
+{
+    Ok o  => $"ok {o.Value}",
+    Err e => e.Message,
+    // không cần _
+};
+
+// ❌ assembly khác
+// public class Unknown : Result { }
+```
+
+**So sánh union vs `closed` vs abstract thường:**
+
+| | `union` | `closed` | abstract/`interface` mở |
+|---|---|---|---|
+| Case không cùng hierarchy | ✅ | ❌ | ❌ |
+| Shared members / virtual | hạn chế | ✅ | ✅ |
+| Exhaustive `switch` | ✅ | ✅ | ❌ (`_`) |
+| Plugin thêm case ngoài assembly | ❌ | ❌ | ✅ |
+
+**Pitfall preview:** thư viện `closed` **cấm** consumer derive — đó là điểm của feature, không phải bug. Đừng `closed` nếu bạn muốn SDK mở rộng state. JSON deserializer tạo subtype lạ → fail model.
+
+**Vì sao / Khi nào dùng:** state machine, AST, Result/Error **cùng assembly**. Plugin architecture → interface mở, không `closed`.
+
 ---
 
 ## 3. Interface
@@ -452,6 +587,18 @@ public interface ILogger
 - Cho phép **định nghĩa mặc định** trong interface; hữu ích khi mở rộng API mà không phá implement cũ.  
 - Dùng tiết chế để tránh “logic trôi dạt” khỏi class cài đặt.
 
+**Semantics:** DIM gọi qua **kiểu interface** (`ILogger x; x.Info(...)`). Class không override thì dùng default. `class C : ILogger { public void Write(...) }` — `C` **không** có `Info` trên kiểu `C` trừ khi tự khai (phải cast `ILogger`).
+
+```csharp
+ILogger log = new ConsoleLog();
+log.Info("hi");                 // default
+// new ConsoleLog().Info("hi"); // lỗi nếu class không khai Info
+```
+
+**Pitfall:** diamond DIM hai interface cùng member → class phải implement tường minh. DIM trên generic + struct: gọi qua interface **box**.
+
+**Vì sao / Khi nào DIM:** thêm method vào interface thư viện đã ship. Logic mới của domain → abstract class / extension, không nhồi interface.
+
 ---
 
 ## 4. Equality & `ToString`
@@ -479,6 +626,30 @@ public class Point : IEquatable<Point>
 
 - Nếu override `Equals`, **phải** override `GetHashCode`.  
 - Khi dùng trong `Dictionary`/`HashSet` → chức năng này rất quan trọng.
+
+**Hợp đồng (bắt buộc):**
+
+1. `Equals` reflexive, symmetric, transitive.  
+2. **`Equals` true ⇒ `GetHashCode` bằng nhau.** Ngược lại không bắt buộc.  
+3. Hash **ổn định** khi object đang là key — đừng hash field mutable rồi sửa field.
+
+```csharp
+var set = new HashSet<Point>();
+var p = new Point(1, 2);
+set.Add(p);
+// nếu Point mutable và p.X = 9 sau Add → HashSet "mất" p (bucket sai)
+```
+
+**So sánh các lớp equality:**
+
+| | `==` mặc định (class) | `Equals` override | `record` | `ReferenceEquals` |
+|---|---|---|---|---|
+| Ý nghĩa | cùng reference (`==` không ảo) | giá trị (nếu bạn viết vậy) | giá trị (sinh sẵn) | cùng instance |
+| Dùng trong Dictionary | không (dict dùng `Equals`+hash / comparer) | ✅ | ✅ | — |
+
+**Pitfall:** overload `==` mà không override `Equals`/`GetHashCode` → `HashSet` và `==` lệch. `GetHashCode` dùng `Random` / `DateTime.Now` = vỡ dictionary. `HashCode.Combine` là mặc định đúng. Struct mặc định equality = field-by-field (reflection-ish / fast path) — **chậm** và box; implement `IEquatable<T>`.
+
+**Vì sao / Khi nào override:** value object không phải `record`. Entity theo Id: `Equals` theo Id **hoặc** giữ reference equality — chọn một, đừng mix. Comparer ngoài type: [collections-generics.md §8](collections-generics.md#8-so-sánh--băm-iequatablet-icomparablet-iequalitycomparert).
 
 ### 4.3 Gợi ý về `record`
 
@@ -581,6 +752,17 @@ public required string Email
 
 **Khi nào dùng:** validation nhẹ, chuẩn hóa giá trị, lazy default trong getter — thay vì full property + `_backing`. Khi cần nhiều field phụ / logic phức tạp giữa nhiều property → vẫn dùng backing field tường minh.
 
+**So sánh `field` vs `_backing` vs auto-property:**
+
+| | Auto `{ get; set; }` | `field` trong accessor | Full `_name` |
+|---|---|---|---|
+| Validation | ❌ | ✅ nhẹ | ✅ phức tạp |
+| Chia field cho 2 property | ❌ | ❌ | ✅ |
+| Tên field ổn định (serialization binary) | compiler đặt tên | compiler đặt tên | bạn đặt |
+| Dùng từ ctor/method | qua property | qua property | trực tiếp field |
+
+**Pitfall:** `field` trong `init` vẫn chạy object initializer. Không giả định thứ tự gán nhiều property `required`. Binary serializer phụ thuộc tên backing — `field` keyword đổi tên compiler-generated: test nếu bạn serialize field private.
+
 ### 5.3 Getter/setter nâng cao
 
 - **Access khác nhau** cho get/set: `public int Age { get; internal set; }`.  
@@ -670,6 +852,10 @@ public class Matrix
 
 - Indexer giống property nhưng nhận **tham số**.  
 - Tên truy cập là `this[...]`.
+
+**Vì sao / Khi nào indexer:** kiểu “là” bộ chứa (`Matrix`, `SettingBag`). Không indexer cho lookup phức tạp 3+ tham số khác nghĩa — method `Get(i, j, kind)` rõ hơn.
+
+**Pitfall:** indexer ném `IndexOutOfRangeException`/`KeyNotFoundException` — document; hoặc `TryGet`. Không thread-safe hơn property.
 
 ### 6.2 Nhiều tham số, quyền truy cập khác nhau
 
@@ -788,12 +974,56 @@ public class Source
 - Custom accessor cho phép kiểm soát đăng ký (giới hạn số lượng, log…).  
 - **Weak event** (mẫu nâng cao) giúp tránh giữ mạnh subscriber → giảm rò rỉ bộ nhớ.
 
-### 7.6 Best practices & cảnh báo
+### 7.6 Best practices & cảnh báo — rò rỉ bộ nhớ
 
 - `event` khác **public delegate field**: field có thể bị gọi từ ngoài → **tránh**.  
 - Luôn **hủy đăng ký** khi không cần (đặc biệt vòng đời dài).  
 - Dùng `protected virtual OnXxx` thay vì `public void RaiseXxx`.  
 - Cân nhắc **Async events**? Không có cơ chế chuẩn; thường **không** khuyến khích `async void` trong event handler (khó quản lý lỗi).
+
+**Vì sao leak:** multicast delegate trên publisher **giữ reference mạnh** tới subscriber. Publisher sống lâu (static, singleton, `App`/`HttpClient` wrapper) mà subscriber là form/page ngắn → GC **không** thu subscriber.
+
+```csharp
+public sealed class Clock
+{
+    public event EventHandler? Tick;
+    public void Pulse() => Tick?.Invoke(this, EventArgs.Empty);
+}
+
+public sealed class Widget
+{
+    private readonly Clock _clock;
+    public Widget(Clock clock)
+    {
+        _clock = clock;
+        _clock.Tick += OnTick;          // Clock giữ Widget
+    }
+
+    private void OnTick(object? s, EventArgs e) { /* ... */ }
+
+    public void Dispose() => _clock.Tick -= OnTick; // bắt buộc nếu Clock sống lâu hơn
+}
+
+// Lambda không gỡ được trừ khi giữ biến:
+EventHandler h = (_, _) => Console.WriteLine("t");
+clock.Tick += h;
+clock.Tick -= h;                        // OK
+clock.Tick += (_, _) => { };            // ❌ không -= được cùng instance
+```
+
+**So sánh cách tránh leak:**
+
+| Cách | Khi nào |
+|---|---|
+| `-=` tường minh / `IDisposable` | Subscriber ngắn, publisher dài |
+| Event chỉ trên object cùng vòng đời | Form tự chết cùng control |
+| Weak event / `WeakEventManager` (WPF) | UI toolkit |
+| `IObservable` + `Unsubscribe` | reactive |
+| Không event — callback/`Channel` | pipeline rõ owner |
+
+**Pitfall:** `static event` gần như chắc leak nếu subscribe từ instance. Thread-safe invoke: copy delegate rồi invoke (`var h = Tick; h?.Invoke`) — field-like event compiler đã làm tương tự với `?.Invoke`. Không `async void` handler: exception nuốt / crash sync context.
+
+**Vì sao / Khi nào dùng event:** UI, observer trong process, plugin in-process. Service boundary → message/queue, không `event` CLR.
 
 ---
 
@@ -926,6 +1156,10 @@ public static class GenericExtensions
 - Extension property là **computed** — không thêm field vào type gốc.  
 - Namespace + `using` vẫn quyết định discoverability (giống extension method).  
 - Tránh “API ma” che member quan trọng của BCL; ưu tiên tên rõ miền.
+
+**Pitfall:** hai `extension` block tạo cùng signature → lỗi. Extension **không** thấy `private` của receiver. Operator extension dễ gây overload khó đọc (`+` trên `IEnumerable`). Classic `this` và block mới **cùng IL** — migrate không breaking, nhưng IntelliSense có thể hiện cả hai nếu bạn để song song cùng tên trong hai class/`using`.
+
+**Vì sao / Khi nào dùng `extension` block:** property (`IsEmpty`), static factory trên type ngoài (`IEnumerable<T>.Empty`), operator có kiểm soát. Method một dòng trên codebase cũ → giữ `this T`. Indexer: **C# 15 preview** (§6.4).
 
 ---
 

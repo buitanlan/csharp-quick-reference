@@ -16,12 +16,20 @@ Chúng **không** là runtime API — biểu thức trong `#if` không đọc bi
   - [3. `#if` / `#elif` / `#else` / `#endif`](#3-if--elif--else--endif)
   - [4. Symbol chuẩn: `DEBUG`, `TRACE`, TFM](#4-symbol-chuẩn-debug-trace-tfm)
   - [5. `ConditionalAttribute` vs preprocessor](#5-conditionalattribute-vs-preprocessor)
+    - [5.1 Semantics: code biến mất vs lời gọi bị strip](#51-semantics-code-biến-mất-vs-lời-gọi-bị-strip)
+    - [5.2 Argument evaluation \& pitfalls](#52-argument-evaluation--pitfalls)
+    - [5.3 Khi nào chọn cái nào](#53-khi-nào-chọn-cái-nào)
   - [6. `#region` / `#endregion`](#6-region--endregion)
   - [7. `#warning` / `#error`](#7-warning--error)
   - [8. `#line`](#8-line)
   - [9. `#pragma warning` / `#pragma checksum`](#9-pragma-warning--pragma-checksum)
   - [10. `#nullable` \& nullable context](#10-nullable--nullable-context)
+    - [10.1 Hai context: annotations vs warnings](#101-hai-context-annotations-vs-warnings)
+    - [10.2 `enable` / `disable` / `restore` / `safeonly`](#102-enable--disable--restore--safeonly)
   - [11. File-based apps: `#!` \& `#:` (C# 14)](#11-file-based-apps----c-14)
+    - [11.1 Ai xử lý `#!` / `#:` / `#if`](#111-ai-xử-lý------if)
+    - [11.2 Các `#:` phổ biến \& thứ tự](#112-các--phổ-biến--thứ-tự)
+    - [11.3 Pitfalls file-based](#113-pitfalls-file-based)
   - [12. Best practices](#12-best-practices)
 
 ---
@@ -38,6 +46,8 @@ Chúng **không** là runtime API — biểu thức trong `#if` không đọc bi
 // Trong .csproj (khuyến nghị cho project-wide symbols):
 // <DefineConstants>$(DefineConstants);FEATURE_X</DefineConstants>
 ```
+
+Preprocessor C# **không** macro thay thế token (`#define PI 3.14` kiểu C **không tồn tại**). Chỉ có *symbol boolean* cho `#if` và `[Conditional]`.
 
 ---
 
@@ -100,6 +110,8 @@ Chúng **không** là runtime API — biểu thức trong `#if` không đọc bi
 
 **Lồng nhau:** được phép; mỗi `#if` cần `#endif` tương ứng. IDE thường tô xám nhánh không active theo cấu hình hiện tại.
 
+**Pitfall:** `#if` quanh `using` / type — nhánh không active không được bind; API thiếu trên TFM phải nằm trong `#if` đúng, không “comment mentally”.
+
 ---
 
 ## 4. Symbol chuẩn: `DEBUG`, `TRACE`, TFM
@@ -115,6 +127,8 @@ Chúng **không** là runtime API — biểu thức trong `#if` không đọc bi
     System.Diagnostics.Debug.Assert(invariant);
 #endif
 ```
+
+`Debug.Assert` / `Debug.WriteLine` đã gắn `[Conditional("DEBUG")]` — thường **không** cần bọc `#if DEBUG` quanh lời gọi (xem §5). `#if` vẫn cần nếu bạn khai báo *type/field* chỉ tồn tại lúc debug.
 
 ### Target Framework Moniker (TFM)
 
@@ -137,14 +151,19 @@ Hữu ích khi **multi-target** một library; với app single-TFM baseline .NE
 
 ## 5. `ConditionalAttribute` vs preprocessor
 
-Hai cơ chế “có điều kiện” nhưng **semantics khác nhau**:
+Hai cơ chế “có điều kiện” nhưng **semantics khác nhau**. Nhầm lẫn → hoặc nhánh Release vẫn chứa API nhạy cảm, hoặc helper debug *vẫn compile* nhưng caller kỳ vọng type biến mất.
+
+### 5.1 Semantics: code biến mất vs lời gọi bị strip
 
 | | `#if` / preprocessor | `[Conditional("DEBUG")]` |
 |---|---|---|
-| Thời điểm | Loại bỏ **cả khối source** khỏi compilation | Method vẫn compile; **lời gọi** bị loại nếu symbol không define |
-| Phạm vi | Bất kỳ đoạn code | Chỉ áp dụng cho method `void` (và một số attribute) |
-| Side-effect ở arg | Không tồn tại (code chết) | **Đối số vẫn được evaluate** rồi lời gọi bị strip? — thực tế compiler loại lời gọi; **không evaluate** arg của lời gọi bị loại |
-| Use case | API khác nhau theo TFM, platform | `Debug.WriteLine`, helper chẩn đoán |
+| Thời điểm | Loại bỏ **cả khối source** khỏi compilation | Method **vẫn compile** vào assembly; **lời gọi** bị loại nếu symbol không define |
+| Phạm vi | Bất kỳ đoạn: type, field, `using`, statement | Method `void` (và một số attribute: `Conditional` trên attribute class) |
+| IL của callee | Không tồn tại nếu bọc hết method | Method **còn** trong DLL (có thể gọi reflection) |
+| IL của caller | Không có opcode nhánh tắt | **Không** có `call` tới method đó |
+| Side-effect ở arg | Code chết — không evaluate | Compiler **loại cả lời gọi** → **không** evaluate argument |
+| Return value | Có thể bao hàm bất kỳ | **Chỉ `void`** — không `[Conditional]` trên `Func<T>` |
+| Use case | API/TFM/platform khác nhau | `Debug.WriteLine`, helper chẩn đoán |
 
 ```csharp
 using System.Diagnostics;
@@ -161,11 +180,88 @@ void Run()
 }
 ```
 
-**Quy tắc chọn:**
+**WHY `Conditional` tồn tại:** giữ *một* surface API (`Debug.Assert(condition)`) trong mọi build; Release không trả giá điều kiện (và không gọi). `#if` quanh từng `Assert` sẽ phình code.
 
-- Cần **API / type / using** khác nhau theo platform → `#if`.
+### 5.2 Argument evaluation & pitfalls
+
+```csharp
+[Conditional("DEBUG")]
+static void Trace(object x) => Console.WriteLine(x);
+
+int n = 0;
+Trace(n++);        // Release: n KHÔNG tăng — lời gọi biến mất hoàn toàn
+
+#if DEBUG
+Trace(n++);        // tương đương ý đồ, nhưng phải lặp #if
+#endif
+```
+
+**Pitfall 1 — dựa vào side-effect argument:** `Debug.Assert(Save() != null)` — Release **không** gọi `Save()`. Assert chỉ cho *kiểm tra*, không cho *công việc bắt buộc*.
+
+**Pitfall 2 — `[Conditional]` không xóa method:**
+
+```csharp
+[Conditional("DEBUG")]
+public static void DumpSecrets(string token) => Console.WriteLine(token);
+// Release: caller bị strip, nhưng DumpSecrets vẫn có trong metadata → reflection vẫn gọi được
+```
+
+Bí mật / API không được tồn tại ở Release → `#if DEBUG` **cả method** (hoặc không ship vào binary).
+
+**Pitfall 3 — không áp dụng overload có return:**
+
+```csharp
+// SAI — Conditional chỉ cho void
+// [Conditional("DEBUG")]
+// public static string Describe() => "...";
+```
+
+**Pitfall 4 — interface / abstract:** `Conditional` trên implementation: lời gọi qua **interface** có thể **không** bị strip (callvirt tới interface — compiler không biết Conditional). Gọi trực tiếp type cụ thể mới strip. Đừng đặt diagnostic quan trọng sau interface.
+
+**Pitfall 5 — `Conditional` trên attribute:** `[Conditional("DEBUG")]` trên *class attribute* → attribute đó bị loại khỏi metadata nếu symbol off (`[Obsolete]` không dùng kiểu này).
+
+```csharp
+[Conditional("DEBUG")]
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class DebugOnlyAttribute : Attribute { }
+
+[DebugOnly] // Release: attribute không gắn
+void M() { }
+```
+
+### 5.3 Khi nào chọn cái nào
+
+- Cần **API / type / using** khác nhau theo platform/TFM → `#if`.
 - Chỉ muốn tắt **lời gọi chẩn đoán** mà giữ signature method → `[Conditional]`.
 - Tránh nhân đôi logic nghiệp vụ lớn trong `#if`/`#else`.
+- Kết hợp hợp lệ: method `[Conditional("DEBUG")]` *bên trong* vẫn có thể `#if NET10_0` cho API mới — hai trục khác nhau (cấu hình vs TFM).
+
+```csharp
+public static class TraceOs
+{
+    [Conditional("DEBUG")]
+    public static void Info(string msg)
+    {
+#if NET10_0_OR_GREATER
+        Console.WriteLine($"[net10] {msg}");
+#else
+        Console.WriteLine(msg);
+#endif
+    }
+}
+```
+
+**Tóm tắt quyết định:**
+
+```
+Cần type/API biến mất khỏi IL Release / TFM khác?
+  ├─ Có → #if
+  └─ Không, chỉ tắt lời gọi chẩn đoán?
+        ├─ Method void, gọi trực tiếp → [Conditional]
+        └─ Có return / gọi qua interface → #if quanh call-site, hoặc API riêng
+```
+
+`Debug.WriteLine` / `Trace.WriteLine` đã `[Conditional]` — đừng bọc thêm `#if DEBUG` trừ khi bạn cần *khối* nhiều statement không phải một lời gọi.
 
 ---
 
@@ -270,27 +366,80 @@ string old = null;        // không warning NRT
 #nullable restore         // về lại trạng thái trước khối / theo project
 ```
 
-| Directive | Ý nghĩa ngắn |
-|---|---|
-| `#nullable enable` | Bật annotations + warnings |
-| `#nullable disable` | Tắt cả hai |
-| `#nullable restore` | Khôi phục context bao ngoài / project |
-| `#nullable enable annotations` | Chỉ annotations |
-| `#nullable enable warnings` | Chỉ warnings |
+### 10.1 Hai context: annotations vs warnings
 
-**Tương tác với preprocessor:** `#if` có thể bao quanh `#nullable`, nhưng **đừng** dùng `#if DEBUG` để bật/tắt nullable khác nhau giữa Debug/Release — dễ lệch hành vi phân tích giữa môi trường.
+Nullable **không** phải một công tắc duy nhất:
+
+| Context | Việc compiler làm |
+|---|---|
+| **Annotation** | `string` nghĩa là non-null; `string?` nghĩa là có thể null. Metadata `NullableAttribute` được ghi (khi enable). |
+| **Warning** | Phát CS86xx khi bạn vi phạm annotation (gán null, dereference). |
+
+Tách hai context để migrate: bật annotation (API đúng `?`) trước, bật warning sau; hoặc ngược lại trong generated code.
+
+`<Nullable>` trong `.csproj`: `enable` / `disable` / `warnings` / `annotations` — cùng mô hình với directive.
+
+### 10.2 `enable` / `disable` / `restore` / `safeonly`
+
+| Directive | Annotations | Warnings |
+|---|---|---|
+| `#nullable enable` | Bật | Bật |
+| `#nullable disable` | Tắt (`string` không còn nghĩa non-null) | Tắt |
+| `#nullable restore` | Khôi phục context bao ngoài / project | Khôi phục |
+| `#nullable enable annotations` | Bật | Giữ nguyên warning context |
+| `#nullable disable annotations` | Tắt | Giữ nguyên |
+| `#nullable enable warnings` | Giữ nguyên | Bật |
+| `#nullable disable warnings` | Giữ nguyên | Tắt |
+| `#nullable restore annotations` / `restore warnings` | Khôi phục từng phần | |
+
+`#nullable disable` trong generated file: tránh hàng nghìn warning, nhưng **caller** thấy API không có `?` — dễ hiểu nhầm non-null. Generator hiện đại nên `#nullable enable` + annotate đúng.
+
+```csharp
+#nullable enable annotations
+public string? Find(string id) => lookup.GetValueOrDefault(id);
+
+#nullable enable warnings
+var x = Find("a").Length; // warning nếu Find trả string?
+```
+
+**`#nullable enable` vs project `disable`:** file opt-in khi migrate từng phần. `restore` không phải “về enable” — về *context trước directive*.
+
+**Tương tác với preprocessor:** `#if` có thể bao quanh `#nullable`, nhưng **đừng** dùng `#if DEBUG` để bật/tắt nullable khác nhau giữa Debug/Release — dễ lệch hành vi phân tích giữa môi trường (cùng code, khác cảnh báo / khác ý nghĩa `string`).
+
+**Pitfall `?` khi annotations disable:** `string?` có thể cảnh báo CS8632 (nullable annotation không có ngữ cảnh). Bật annotation hoặc bỏ `?`.
+
+Oblivious vs nullable: code cũ không `?` khi disable = *oblivious* (compiler không biết null hay không). Library oblivious + consumer enable → warning khi dereference tùy flow.
+
+**`#nullable restore` stack:** mỗi `enable`/`disable` đẩy context; `restore` pop. Hai lần `enable` lồng rồi một `restore` về tầng giữa, không nhảy về project.
+
+```csharp
+#nullable disable
+#nullable enable
+string a = null;       // warning
+#nullable restore      // disable trở lại
+string b = null;       // không warning
+#nullable restore      // về project (thường enable trên .NET 10)
+```
+
+Generated code: `#nullable disable warnings` giữ annotation để caller thấy `string?`, nhưng file gen không spam CS86xx. `#nullable disable` cả hai → caller mất thông tin null.
+
+`<Nullable>enable</Nullable>` + file `#nullable disable` = file đó oblivious; đừng làm vậy cho public API.
 
 ---
 
 ## 11. File-based apps: `#!` & `#:` (C# 14)
 
-Từ **C# 14 / .NET 10**, file-based apps (`dotnet run app.cs`) hỗ trợ directive cấu hình **không phải** conditional compilation cổ điển:
+Từ **C# 14 / .NET 10**, file-based apps (`dotnet run app.cs`) hỗ trợ directive cấu hình **không phải** conditional compilation cổ điển. Chi tiết entry/TLS: [main-function.md §8](main-function.md#8-file-based-apps-net-10--c-14).
 
-| Directive | Ai xử lý | Vai trò |
-|---|---|---|
-| `#!` | OS / shell (shebang) | Cho phép `./app.cs` trên Unix |
-| `#:`… | **Build system** (SDK), compiler **bỏ qua** | Cấu hình package, property, SDK… thay `.csproj` |
-| `#if` / `#define`… | **Compiler** | Conditional compilation như cũ |
+### 11.1 Ai xử lý `#!` / `#:` / `#if`
+
+| Directive | Ai xử lý | Vai trò | Compiler C# thấy? |
+|---|---|---|---|
+| `#!` | OS / shell (shebang) | Cho phép `./app.cs` trên Unix | Thường bỏ qua / không là C# token |
+| `#:`… | **Build system** (SDK), compiler **bỏ qua** | Cấu hình package, property, SDK… thay `.csproj` | **Không** parse như C# |
+| `#if` / `#define`… | **Compiler** | Conditional compilation như cũ | Có |
+
+**WHY `#:` không phải `#if`:** file-based app không có `.csproj` để ghi `PackageReference` / `Nullable`. SDK đọc `#:` *trước* compile, sinh project ảo. Compiler không hiểu `#:package` — nếu lọt vào compiler như preprocessor lạ → warning/error tùy host.
 
 Trong **project-based** compilation, `#:` thường gây warning (không dùng trong `.csproj` apps).
 
@@ -306,15 +455,49 @@ Console.WriteLine("file-based + DEBUG");
 #endif
 ```
 
-Các `#:` phổ biến:
+Shebang phải **dòng đầu** (Unix). Windows `dotnet run app.cs` bỏ qua `#!`.
 
-- `#:package Package@version` — NuGet
-- `#:property Name=Value` — MSBuild property
-- `#:sdk Some.Sdk` — đổi SDK (ví dụ Web)
+### 11.2 Các `#:` phổ biến & thứ tự
+
+- `#:package Package@version` — NuGet (`@*` / version range tùy SDK)
+- `#:property Name=Value` — MSBuild property (`Nullable`, `PublishAot`, `DefineConstants`, `TargetFramework`, …)
+- `#:sdk Some.Sdk` — đổi SDK (ví dụ `Microsoft.NET.Sdk.Web`)
 - `#:project path` — tham chiếu project
 - `#:include path` — include thêm file (SDK mới hơn; kiểm tra phiên bản SDK)
 
-**Lưu ý:** `#:` **không** thay `#if` — không define symbol biên dịch; muốn symbol thì `#:property DefineConstants=...` hoặc `#define` trong file.
+**Thứ tự:** `#!` → các `#:` → `using` / TLS. `#:` sau statement C# thường không hợp lệ (phải đầu file, trước token C# — tương tự `#define`).
+
+```csharp
+#:sdk Microsoft.NET.Sdk.Web
+#:package Microsoft.AspNetCore.OpenApi@10.*
+#:property TargetFramework=net10.0
+
+var app = WebApplication.Create(args);
+app.MapGet("/", () => "ok");
+app.Run();
+```
+
+Muốn symbol biên dịch: `#:property DefineConstants=FEATURE_X` (cộng dồn tùy SDK) hoặc `#define` trong file. `#:package` **không** define symbol.
+
+### 11.3 Pitfalls file-based
+
+1. **Nhầm `#:` với preprocessor** — không viết `#:if DEBUG`. Dùng `#if DEBUG` như project thường; `DEBUG` vẫn theo cấu hình `dotnet run`.
+2. **Copy `#:` vào class library `.csproj`** — compiler/SDK cảnh báo; chuyển `dotnet project convert` khi app lớn.
+3. **Version lock** — `@*` tiện prototype, CI/production nên pin version.
+4. **Nhiều file** — file-based mặc định một file; `#:include` / convert project khi tách type.
+5. **`#nullable` vs `#:property Nullable=`** — property là mặc định project ảo; `#nullable` trong file vẫn ghi đè vùng. Nên `#:property Nullable=enable` + code annotated.
+6. **TFM** — không ghi `#:property` → SDK chọn mặc định (.NET 10 trên toolchain hiện tại); multi-target không phải use case file-based.
+
+```csharp
+#:property Nullable=enable
+#:property DefineConstants=TRACE
+
+#nullable enable
+string? q = args.Length > 0 ? args[0] : null;
+#if TRACE
+Console.WriteLine(q);
+#endif
+```
 
 ---
 
@@ -324,18 +507,18 @@ Các `#:` phổ biến:
    Ưu tiên cấu hình runtime (`IConfiguration`, options, feature management). `#if` nhân bản binary path → khó test đủ nhánh, khó ship một build.
 
 2. **Giữ `#if` cho biên giới thật sự của compile**  
-   TFM/API khác nhau, platform (`WINDOWS`/`LINUX` nếu có), bỏ debug-only assertions.
+   TFM/API khác nhau, platform (`WINDOWS`/`LINUX` nếu có), bỏ debug-only *types*.
 
 3. **Định nghĩa symbol ở project/CI**, không rải `#define` trong nhiều file.
 
-4. **`[Conditional]` cho diagnostics**; `#if` khi cả khối type/API phải biến mất.
+4. **`[Conditional]` cho diagnostics**; `#if` khi cả khối type/API phải biến mất. Đừng dựa side-effect argument của `Debug.Assert`.
 
 5. **`#pragma warning`**: phạm vi hẹp + lý do; prefer sửa root cause.
 
 6. **`#region`**: tổ chức nhẹ; không thay thế thiết kế module tốt.
 
-7. **Nullable**: bật project-wide; `#nullable` chỉ để migrate / generated code — tránh Debug≠Release.
+7. **Nullable**: bật project-wide; `#nullable` chỉ để migrate / generated code — tránh Debug≠Release. Hiểu tách **annotations** vs **warnings**.
 
-8. **File-based apps**: dùng `#:` cho script/prototype; khi lớn hãy `dotnet project convert` sang `.csproj`.
+8. **File-based apps**: `#:` cho script/prototype (package/property/SDK); `#if` vẫn cho TFM/DEBUG. Khi lớn hãy `dotnet project convert` sang `.csproj`.
 
-9. **Đo / review IL** khi nghi ngờ nhánh `#if` (đảm bảo API nhạy cảm không lọt vào Release).
+9. **Đo / review IL** khi nghi ngờ nhánh `#if` (đảm bảo API nhạy cảm không lọt vào Release). Reflection vẫn thấy method `[Conditional]` .

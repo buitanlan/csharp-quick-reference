@@ -18,7 +18,10 @@
     - [2.6 `SortedDictionary<TKey,TValue>` vs `SortedList<TKey,TValue>`](#26-sorteddictionarytkeytvalue-vs-sortedlisttkeytvalue)
     - [2.7 `HashSet<T>` / `SortedSet<T>`](#27-hashsett--sortedsett)
   - [3. Collections bất biến (`System.Collections.Immutable`)](#3-collections-bất-biến-systemcollectionsimmutable)
-  - [4. Collections đồng thời (thread-safe)](#4-collections-đồng-thời-thread-safe)
+  - [4. `List` vs Frozen vs Concurrent](#4-list-vs-frozen-vs-concurrent)
+    - [4.1 Collections đồng thời (thread-safe)](#41-collections-đồng-thời-thread-safe)
+    - [4.2 Frozen (`System.Collections.Frozen`)](#42-frozen-systemcollectionsfrozen)
+    - [4.3 Bảng so sánh](#43-bảng-so-sánh)
   - [5. Readonly \& View: `ReadOnlyCollection<T>`, `IReadOnlyList<T>`…](#5-readonly--view-readonlycollectiont-ireadonlylistt)
   - [6. Mảng \& các tiện ích hiệu năng: `Array`, `ArrayPool<T>`, `Span<T>`, `Memory<T>`](#6-mảng--các-tiện-ích-hiệu-năng-array-arraypoolt-spant-memoryt)
   - [7. Collection expressions (C# 12+) \& args (C# 15 preview)](#7-collection-expressions-c-12--args-c-15-preview)
@@ -26,7 +29,7 @@
   - [9. Hiệu năng \& best practices khi dùng collections](#9-hiệu-năng--best-practices-khi-dùng-collections)
   - [10. Generics nâng cao](#10-generics-nâng-cao)
     - [10.1 Ràng buộc (`where`) \& mẫu thiết kế](#101-ràng-buộc-where--mẫu-thiết-kế)
-    - [10.2 Phương sai (variance): `out`/`in`](#102-phương-sai-variance-outin)
+    - [10.2 Phương sai (variance): `out`/`in` — PECS](#102-phương-sai-variance-outin--pecs)
     - [10.3 Generic math \& `static abstract` members](#103-generic-math--static-abstract-members)
     - [10.4 Comparer/Equality custom cho collections](#104-comparerequality-custom-cho-collections)
   - [11. Cheat sheet chọn cấu trúc dữ liệu](#11-cheat-sheet-chọn-cấu-trúc-dữ-liệu)
@@ -52,6 +55,12 @@ IReadOnlyCollection<T> / IReadOnlyList<T> / IReadOnlyDictionary<TKey,TValue>
 - **Duyệt**: mọi collection nên hỗ trợ `foreach` qua `IEnumerable<T>`.  
 - **Try-pattern**: `bool TryGetValue(TKey key, out TValue value)` để tránh ném exception trong luồng thường.
 
+**Semantics:** `IEnumerable<T>` chỉ cam kết *duyệt được* — không `Count` O(1), không random access. `IReadOnlyList<T>` thêm indexer + `Count`. `ICollection<T>` cho phép mutate (`Add`) — **đừng** trả `ICollection<T>` nếu caller không được sửa.
+
+**Vì sao / Khi nào dùng interface mỏng:** public API thư viện. Nội bộ implementation có thể giữ `List<T>` để `Add`/`EnsureCapacity`.
+
+**Pitfall:** `IEnumerable<T>` có thể là iterator deferred (LINQ) — duyệt 2 lần chạy lại query. Materialize (`ToList`) khi cần snapshot.
+
 ---
 
 ## 2. Nhóm Collections thường dùng (mutable)
@@ -71,6 +80,18 @@ int idx = list.BinarySearch(2); // yêu cầu list đã Sort
 
 **Mẹo**: biết trước kích thước? → set `Capacity` để tránh **realloc** nhiều lần.
 
+**Semantics:** khi `Count == Capacity`, `Add` cấp phát mảng mới (~×2) và copy — amortized O(1) nhưng spike GC. `list[i]` không bound-check-elide như `Span` trong mọi JIT, nhưng rất gần mảng.
+
+```csharp
+var xs = new List<int> { 1, 2, 3 };
+foreach (ref var n in CollectionsMarshal.AsSpan(xs))
+    n++; // sửa tại chỗ — vô hiệu nếu Add làm realloc sau đó
+```
+
+**So sánh:** mặc định cho dãy mutable 1 thread. Không thread-safe. Frozen/Immutable khi chia sẻ đọc; `ConcurrentBag` không thay `List`.
+
+**Vì sao / Khi nào dùng:** 90% “danh sách”. Tránh `List<object>` + boxing; tránh `Insert(0, …)` lặp lại (dùng `LinkedList`/`Stack`/`Queue` tùy chiều).
+
 ---
 
 ### 2.2 `LinkedList<T>`
@@ -83,6 +104,10 @@ var ll = new LinkedList<int>();
 var n2 = ll.AddLast(2);
 ll.AddBefore(n2, 1); // O(1)
 ```
+
+**Pitfall:** `foreach` + xóa node đang duyệt cần `LinkedListNode`. Đừng chọn `LinkedList` “vì O(1) insert” nếu bạn vẫn `Find` O(n) mỗi lần.
+
+**Vì sao / Khi nào dùng:** LRU thủ công, queue có xóa giữa. Benchmark trước — `List` thường thắng nhờ cache.
 
 ---
 
@@ -97,6 +122,10 @@ q.Enqueue("a");
 var x = q.Dequeue(); // "a"
 ```
 
+**Pitfall:** `Dequeue` trên rỗng → `InvalidOperationException`; dùng `TryDequeue`. Không thread-safe — producer/consumer → `Channel`/`ConcurrentQueue`.
+
+**Vì sao / Khi nào dùng:** BFS, buffer tuần tự 1 thread.
+
 ---
 
 ### 2.4 `Stack<T>`
@@ -108,6 +137,8 @@ var st = new Stack<int>();
 st.Push(10);
 int top = st.Pop();
 ```
+
+**Vì sao / Khi nào dùng:** DFS, undo, parse ngoặc. `TryPop` thay `Pop` trên biên rỗng.
 
 ---
 
@@ -127,6 +158,18 @@ if (dict.TryGetValue("key", out var value))
 
 **Mẹo**: chọn `StringComparer.Ordinal`/`OrdinalIgnoreCase` thay vì mặc định để rõ ràng *culture*.
 
+**Semantics:** hash % bucket; collision → chain/contiguous. Worst-case O(n) nếu hash xấu hoặc tấn công hash (string comparer ordinal giảm rủi ro culture). `Key` **không** được đổi field ảnh hưởng hash sau khi đưa vào dictionary.
+
+```csharp
+dict["k"] = dict.TryGetValue("k", out var c) ? c + 1 : 1; // 2 lần hash nếu không cẩn
+dict["k"] = 1;
+dict.TryAdd("k", 2);                 // false, không ghi đè
+```
+
+**Pitfall:** `dict[missing]` ném `KeyNotFoundException`. Mutable key (`List<int>` làm key) = bug. Không thread-safe: đọc song song khi có ghi → undefined (có thể corrupt).
+
+**Vì sao / Khi nào dùng:** lookup 1 thread / “ghi rồi đọc” trên cùng thread. Nhiều thread ghi → Concurrent hoặc lock. Data cố định sau startup → Frozen.
+
 ---
 
 ### 2.6 `SortedDictionary<TKey,TValue>` vs `SortedList<TKey,TValue>`
@@ -138,6 +181,8 @@ Chọn gì?
 
 - Nhiều **insert/remove rải rác** → `SortedDictionary`.  
 - Ít thay đổi, cần **truy cập theo index** hoặc bộ nhớ chặt → `SortedList`.
+
+**Vì sao không dùng mặc định:** `Dictionary` nhanh hơn nếu không cần thứ tự key. Sorted chỉ khi duyệt theo thứ tự / range.
 
 ---
 
@@ -153,11 +198,15 @@ a.IntersectWith(b); // a = {3}
 
 - `SortedSet<T>`: sắp xếp tự nhiên theo `IComparer<T>`; hỗ trợ **range view** (`GetViewBetween`).
 
+**Pitfall:** `IntersectWith` **mutate** `a`. Cần tập mới → copy trước hoặc LINQ `Intersect` (cấp phát). Equality phần tử = comparer của set, không phải `==` của bạn trừ khi khớp.
+
+**Vì sao / Khi nào dùng:** membership, loại trùng. `FrozenSet` khi tập cố định, tra cứu cực nhiều.
+
 ---
 
 ## 3. Collections bất biến (`System.Collections.Immutable`)
 
-> **Lưu ý**: `System.Collections.Immutable` là một thư viện riêng, cần cài đặt NuGet package `System.Collections.Immutable` để sử dụng.
+> **Lưu ý**: `System.Collections.Immutable` là một thư viện riêng, cần cài đặt NuGet package `System.Collections.Immutable` để sử dụng. (Nhiều SDK hiện đại đã kéo transitive.)
 
 - `ImmutableList<T>`, `ImmutableDictionary<TKey,TValue>`, `ImmutableHashSet<T>`…  
 - **Mọi thao tác sinh cấu trúc mới**; bên trong dùng **persistent data structure** để chia sẻ nút → tiết kiệm bộ nhớ so với copy thô.
@@ -171,23 +220,98 @@ var list2 = list.Add(1).Add(2); // list vẫn rỗng
 
 **Builder**: `var b = list.ToBuilder(); ...; var newList = b.ToImmutable();` — tối ưu nhiều thao tác.
 
+**So sánh với Frozen:** Immutable *cập nhật rẻ* (chia sẻ cấu trúc) nhưng lookup thường **chậm hơn** `Dictionary`/`FrozenDictionary`. Frozen *xây đắt, đọc rẻ, không chỉnh từng phần tử*.
+
+**Vì sao / Khi nào dùng Immutable:** snapshot, undo, message giữa thread không lock. Cache đọc-nhiều sau init → Frozen. View không mutate API → `IReadOnly*` (gốc vẫn mutable).
+
 ---
 
-## 4. Collections đồng thời (thread-safe)
+## 4. `List` vs Frozen vs Concurrent
+
+Ba họ giải **ba bài toán khác nhau** — không thay thế nhau.
+
+| Nhu cầu | Chọn |
+|---|---|
+| Mutable, 1 thread (hoặc lock ngoài) | `List<T>` / `Dictionary<,>` |
+| Nhiều thread **ghi** xen kẽ | `Concurrent*` hoặc `lock` |
+| Xây **một lần**, đọc rất nhiều, không sửa | `FrozenDictionary` / `FrozenSet` |
+| Sửa tạo phiên bản mới, chia sẻ an toàn | `Immutable*` |
+
+### 4.1 Collections đồng thời (thread-safe)
 
 - `ConcurrentDictionary<TKey,TValue>`: tra cứu an toàn, API `GetOrAdd`, `AddOrUpdate`.
 - `ConcurrentQueue<T>`, `ConcurrentStack<T>`, `ConcurrentBag<T>`: hàng đợi/ngăn xếp/túi thread-safe (không có thứ tự mạnh).
 - `BlockingCollection<T>`: bọc trên concurrent collection với **bounded capacity** & blocking producers/consumers.
 - `System.Threading.Channels` (thư viện riêng): **channel** tốc độ cao (producer/consumer) — tốt cho I/O pipeline.
-- **`PriorityQueue<TElement,TPriority>`** (.NET 6+): heap; không phải `IEnumerable` đầy đủ như `Queue<T>`.
-- **`FrozenDictionary` / `FrozenSet`** (`System.Collections.Frozen`, .NET 8+): xây một lần, đọc rất nhiều — lookup nhanh hơn `Dictionary` khi data bất biến sau init.
+- **`PriorityQueue<TElement,TPriority>`** (.NET 6+): heap; không phải `IEnumerable` đầy đủ như `Queue<T>`. **Không** thread-safe.
 
 ```csharp
 var cd = new ConcurrentDictionary<string,int>();
 int v = cd.AddOrUpdate("k", 1, (_, old) => old + 1);
 ```
 
+**Semantics `GetOrAdd`:** factory **có thể chạy thừa** (hai thread cùng miss) — factory phải **idempotent / rẻ / không side-effect độc**. Giá trị thắng là một trong các kết quả được store atomic.
+
+```csharp
+// ❌ factory có side-effect đắt / không idempotent
+cd.GetOrAdd("k", _ => LoadFromDb()); // có thể Load hai lần
+```
+
 > **Lock thủ công** (`lock`) vẫn hữu ích cho thao tác phức tạp nhiều bước cần tính nguyên tử.
+
+**Pitfall:** `ConcurrentDictionary` **không** làm `if (!d.ContainsKey) d[k]=…` atomic — đúng API là `TryAdd`/`GetOrAdd`. Enumerate vừa sửa: snapshot yếu, không freeze. `ConcurrentBag` không FIFO.
+
+**Vì sao / Khi nào dùng Concurrent:** cache chia sẻ có ghi. Chỉ đọc sau init → Frozen nhanh hơn và đơn giản hơn (không lock).
+
+### 4.2 Frozen (`System.Collections.Frozen`)
+
+**`.NET 8+`**, namespace `System.Collections.Frozen`. Xây một lần (`ToFrozenDictionary` / `FrozenDictionary.Create`), sau đó **chỉ đọc** — runtime chọn layout tối ưu theo dữ liệu (small map, string keys…).
+
+```csharp
+using System.Collections.Frozen;
+
+var source = new Dictionary<string, int>(StringComparer.Ordinal)
+{
+    ["ok"] = 200,
+    ["no"] = 404,
+};
+
+FrozenDictionary<string, int> codes = source.ToFrozenDictionary(StringComparer.Ordinal);
+int n = codes["ok"]; // nhanh, thread-safe đọc
+
+// .NET 10: Create từ span — tránh List tạm
+FrozenDictionary<string, int> codes2 = FrozenDictionary.Create(
+    StringComparer.Ordinal,
+    (ReadOnlySpan<KeyValuePair<string, int>>)
+    [
+        new("ok", 200),
+        new("no", 404),
+    ]);
+```
+
+**Semantics:** không `Add` sau freeze. “Cập nhật” = xây Frozen mới từ nguồn mutable. Lookup thường thắng `Dictionary` trên tập lớn, đọc lặp; **không** luôn thắng trên tập rất nhỏ / key `int` tuần tự — **đo**.
+
+**So sánh chi phí:** freeze tốn CPU/memory lúc init (chấp nhận được ở startup). `ImmutableDictionary.Add` từng key rẻ hơn rebuild Frozen; Frozen lookup rẻ hơn Immutable.
+
+**Vì sao / Khi nào dùng:** bảng mã, route, MIME, config sau load, từ điển dịch. Không dùng nếu dataset đổi liên tục.
+
+### 4.3 Bảng so sánh
+
+| | `List`/`Dictionary` | `ConcurrentDictionary` | `FrozenDictionary` | `ImmutableDictionary` |
+|---|---|---|---|---|
+| Ghi | ✅ rẻ | ✅ concurrent | ❌ rebuild | ✅ persistent |
+| Đọc nhiều thread không ghi | ⚠️ không an toàn nếu có ghi song song | ✅ | ✅ | ✅ |
+| Lookup điển hình | baseline | + overhead sync | thường nhanh nhất (steady) | chậm hơn dict |
+| Khởi tạo | rẻ | rẻ | đắt hơn | trung bình |
+| API mutate tại chỗ | ✅ | ✅ | ❌ | ❌ (trả instance mới) |
+
+```csharp
+// Chọn theo vòng đời
+Dictionary<string, string> building = new(StringComparer.Ordinal);
+Fill(building);
+FrozenDictionary<string, string> published = building.ToFrozenDictionary(StringComparer.Ordinal);
+// building có thể bỏ — published phục vụ request
+```
 
 ---
 
@@ -199,6 +323,10 @@ int v = cd.AddOrUpdate("k", 1, (_, old) => old + 1);
 ```csharp
 IReadOnlyList<int> GetIds() => _ids; // _ids là List<int>
 ```
+
+**Pitfall lớn:** trả `_ids` như `IReadOnlyList<T>` **không** ngăn caller cast lại `List<T>` và `Add`. Muốn cứng: copy, `ToFrozenSet`, hoặc `ImmutableList`. `AsReadOnly()` vẫn là view — gốc đổi, view đổi.
+
+**Vì sao / Khi nào dùng view:** encapsulation nội bộ, caller tin cậy. Biên assembly không tin → copy/Frozen/Immutable.
 
 ---
 
@@ -226,6 +354,8 @@ finally
 
 **CollectionsMarshal** (nâng cao): `CollectionsMarshal.AsSpan(list)` để truy cập nội bộ `List<T>` *không an toàn phiên bản* → chỉ dùng khi hiểu rõ ràng buộc.
 
+**Vì sao / Khi nào dùng pool:** buffer > vài trăm byte, hot path. Quên `Return` = leak pool; dùng sau `Return` = corrupt.
+
 ---
 
 ## 7. Collection expressions (C# 12+) & args (C# 15 preview)
@@ -242,6 +372,17 @@ int[] merged = [..arr, 4, 5]; // spread
 - Compiler chọn constructor / `CollectionBuilder` / empty phù hợp với kiểu đích.  
 - Hỗ trợ spread `..` để nối sequence.  
 - Ưu tiên khi khởi tạo ngắn; vẫn dùng `new List<T>(capacity)` khi cần capacity tường minh (hoặc xem args preview bên dưới).
+
+**Semantics:** `[...]` **không** có kiểu riêng — kiểu đến từ đích (`List<int> x = [1]` khác `int[] y = [1]`). `Span<int> s = [1,2,3]` có thể `stackalloc`/inline — **không** sống lâu hơn method. Spread `..xs` enumerates `xs` lúc tạo.
+
+```csharp
+IEnumerable<int> xs = [1, 2, 3]; // thường thành mảng rồi wrap
+HashSet<int> set = [1, 1, 2];    // 2 phần tử — HashSet loại trùng
+```
+
+**Pitfall:** `var x = [1, 2, 3]` — C# 12+ suy `int[]` trong nhiều ngữ cảnh; không đoán `List`. Overload `void F(List<int> a)` vs `void F(int[] a)` + `F([1,2])` → resolution có thể đổi giữa phiên bản — test kỹ. Collection expression vào `Span` rồi return ra ngoài = lỗi lifetime.
+
+**Vì sao / Khi nào dùng:** khởi tạo ngắn, test, merge `[..a, ..b]`. Hot-path biết capacity → `new List<T>(n)` hoặc preview `with(capacity:…)`.
 
 ### Collection expression arguments — **PREVIEW (C# 15 / .NET 11)**
 
@@ -264,6 +405,8 @@ HashSet<string> set = [with(StringComparer.OrdinalIgnoreCase), "Hello", "HELLO",
 - Không dùng cho **array** / **span** targets.  
 - Arg không được `dynamic`.  
 - Với `[CollectionBuilder]`, args truyền vào factory **trước** `ReadOnlySpan<T>` phần tử.
+
+**Vì sao / Khi nào dùng (preview):** `List` cần capacity, `HashSet`/`Dictionary` cần comparer ngay lúc tạo — tránh `new HashSet(...) { ... }` dài. Production .NET 10: `new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Hello" }` hoặc `EnsureCapacity`.
 
 ---
 
@@ -288,6 +431,10 @@ var set = new HashSet<Person>(new PersonIdComparer());
 
 **Tuples/records**: đã có equality/hashing theo giá trị; tận dụng cho key phức tạp: `Dictionary<(int,int),TValue>`.
 
+**Pitfall:** override `Equals` mà quên `GetHashCode` → Dictionary “mất” key. Comparer **phải** ổn định: `StringComparer.CurrentCulture` đổi theo thread culture → đừng làm key comparer. Chi tiết cặp Equals/GetHashCode: [oop.md §4](oop.md#4-equality--tostring).
+
+**Vì sao / Khi nào dùng comparer ngoài type:** cùng `Person` lúc thì so Id, lúc thì so Email — không nhúng một `Equals` duy nhất.
+
 ---
 
 ## 9. Hiệu năng & best practices khi dùng collections
@@ -301,6 +448,7 @@ var set = new HashSet<Person>(new PersonIdComparer());
 - **LINQ**: rõ ràng, ngắn; nhưng dễ **cấp phát**. Trong đường nóng → cân nhắc vòng `for`/`foreach`.  
 - **Immutable**: dùng khi chia sẻ giữa thread nhiều đọc; biến đổi nhiều → dùng `Builder`.  
 - **Concurrent**: thao tác đơn giản → concurrent collections; thao tác phức tạp nhiều bước → *lock*.
+- **Frozen**: init một lần, đọc hot.
 
 ---
 
@@ -324,7 +472,9 @@ public interface IRepository<T> where T : class
 - Ràng buộc đặc biệt: `unmanaged`, `notnull`, `struct`, `class`, `new()`, **`allows ref struct`** (C# 13 — generic nhận `Span<T>` / `ref struct`).  
 - **Ràng buộc nhiều**: `where T : SomeBase, ISvc, new()`.
 
-### 10.2 Phương sai (variance): `out`/`in`
+**Vì sao ràng buộc:** JIT có thể gọi interface trên struct **không box** khi `where T : IComparable<T>`. Không ràng buộc + `IComparable` → box. Chi tiết anti-constraint: [typesystem.md §13.2](typesystem.md#132-allows-ref-struct-c-13).
+
+### 10.2 Phương sai (variance): `out`/`in` — PECS
 
 - **Covariant `out`**: cho **output-only**. Ví dụ `IEnumerable<out T>` → `IEnumerable<string>` nạp vào nơi cần `IEnumerable<object>`.
 - **Contravariant `in`**: cho **input-only**. Ví dụ `IComparer<in T>` có thể so sánh `object` cho `string`.
@@ -335,6 +485,36 @@ IEnumerable<object> oo = ss; // ok nhờ 'out T'
 ```
 
 > Không áp dụng cho class/struct generic, chỉ **interface/delegate**.
+
+**PECS** (*Producer Extends, Consumer Super* — thuật ngữ Java; C# dùng `out`/`in`):
+
+| Vai trò | Java PECS | C# | Ý nghĩa |
+|---|---|---|---|
+| Producer (chỉ đọc T ra) | `? extends T` | `IFoo<out T>` | `Foo<Derived>` dùng như `Foo<Base>` |
+| Consumer (chỉ ghi T vào) | `? super T` | `IFoo<in T>` | `Foo<Base>` dùng như `Foo<Derived>` |
+| Cả hai (List) | invariant | `List<T>` invariant | không gán chéo |
+
+```csharp
+void PrintAll(IEnumerable<object> items)
+{
+    foreach (var x in items) Console.WriteLine(x);
+}
+
+IEnumerable<string> names = ["a"];
+PrintAll(names); // producer: string extends object
+
+void SortNames(List<string> names, IComparer<string> cmp) => names.Sort(cmp);
+
+IComparer<object> byToString = Comparer<object>.Create(
+    (a, b) => string.CompareOrdinal(a?.ToString(), b?.ToString()));
+SortNames(["b", "a"], byToString); // consumer: comparer<object> super string
+```
+
+**Vì sao `List<T>` invariant:** nếu `List<string>` là `List<object>`, `list.Add(new object())` phá mảng string — cùng lỗ hổng [array covariance](typesystem.md#9-mảng-arrays-1d-nhiều-chiều-jagged-spant).
+
+**Pitfall:** khai báo `out T` rồi có method `void Add(T)` → lỗi compile. Delegate `Func<out T>` covariant; `Action<in T>` contravariant.
+
+**Vì sao / Khi nào dùng:** API chỉ duyệt → `IEnumerable<out T>` / `IReadOnlyList<out T>`. API chỉ so sánh/ghi → `IComparer<in T>` / `Action<in T>`. Storage hai chiều → invariant `List<T>`.
 
 ### 10.3 Generic math & `static abstract` members
 
@@ -353,6 +533,37 @@ T Sum<T>(IEnumerable<T> xs) where T : INumber<T>
 
 - Viết thuật toán số học generic **không cần** overloading thủ công từng kiểu.
 
+**Semantics:** `INumber<T>` yêu cầu `T` tự làm toán tử `+`, `T.Zero`, parse… JIT chuyên biệt hóa theo `T` (`int` vs `double`) — không phải dispatch ảo cổ điển trên instance.
+
+```csharp
+static T Clamp<T>(T value, T min, T max)
+    where T : IComparable<T>
+    => value.CompareTo(min) < 0 ? min
+     : value.CompareTo(max) > 0 ? max
+     : value;
+
+static T Average<T>(ReadOnlySpan<T> xs)
+    where T : INumber<T>
+{
+    if (xs.IsEmpty) return T.Zero;
+    T sum = T.Zero;
+    foreach (var x in xs) sum += x;
+    return sum / T.CreateChecked(xs.Length);
+}
+
+_ = Sum([1, 2, 3]);                 // int
+_ = Sum([1.5, 2.5]);                // double
+_ = Average<decimal>([1.0m, 2.0m]);
+```
+
+**Họ interface hay dùng:** `INumber<T>`, `IBinaryInteger<T>`, `IFloatingPoint<T>`, `IAdditionOperators<T,T,T>`, `IMinMaxValue<T>`.
+
+**Pitfall:** `T.CreateChecked` ném khi overflow; `CreateTruncating`/`CreateSaturating` khác semantics. Không giả định `INumber<T>` = “không NaN” (`double`). Mixing `INumber<T>` với `IEnumerable` box enumerator nếu không concrete.
+
+**So sánh:** trước .NET 7 phải `Add(int)`, `Add(double)`, … hoặc `dynamic` (chậm, không an toàn). Generic math = một thuật toán, nhiều kiểu.
+
+**Vì sao / Khi nào dùng:** thư viện số, thống kê, shader-like. Business money → `decimal` tường minh thường rõ hơn generic.
+
 ### 10.4 Comparer/Equality custom cho collections
 
 - `Dictionary<TKey,TValue>(IEqualityComparer<TKey>)`  
@@ -362,6 +573,8 @@ T Sum<T>(IEnumerable<T> xs) where T : INumber<T>
 var dictCI = new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
 var setDesc = new SortedSet<int>(Comparer<int>.Create((a,b) => b.CompareTo(a)));
 ```
+
+**Pitfall:** đổi comparer sau khi đã có data = không hỗ trợ. Frozen phải truyền comparer **lúc** `ToFrozenDictionary(comparer)`.
 
 ---
 
@@ -376,7 +589,9 @@ var setDesc = new SortedSet<int>(Comparer<int>.Create((a,b) => b.CompareTo(a)));
 | Tập hợp không trùng | `HashSet<T>` |
 | Cần thứ tự sort & tra cứu | `SortedDictionary<TKey,TValue>` |
 | Sort ổn định, ít cập nhật, cần index | `SortedList<TKey,TValue>` |
-| Chia sẻ thread-safe, nhiều đọc | `Immutable*` collections |
+| Chia sẻ thread-safe, nhiều đọc, **không ghi** sau init | `FrozenDictionary` / `FrozenSet` |
+| Chia sẻ thread-safe, **có ghi** | `Concurrent*` / `lock` |
+| Snapshot / undo / persistent | `Immutable*` collections |
 | Producer/consumer tốc độ cao | `System.Threading.Channels` / `BlockingCollection<T>` |
 | Giảm GC với buffer | `ArrayPool<T>`, `Span<T>`/`Memory<T>` |
 
@@ -403,6 +618,21 @@ IReadOnlyList<(string Word, int Count)> TopNWords(IEnumerable<string> words, int
 }
 ```
 
+Lookup mã HTTP cố định — Frozen:
+
+```csharp
+static readonly FrozenDictionary<int, string> Status =
+    new Dictionary<int, string>
+    {
+        [200] = "OK",
+        [404] = "Not Found",
+        [500] = "Error",
+    }.ToFrozenDictionary();
+
+static string Label(int code)
+    => Status.TryGetValue(code, out var s) ? s : "Unknown";
+```
+
 ---
 
-**Kết luận**: Nắm vững **interface cốt lõi**, chọn đúng **cấu trúc dữ liệu**, hiểu **equality/hashing**, và sử dụng **generics nâng cao** (ràng buộc, variance, generic math) sẽ giúp code C# của bạn **đúng, nhanh, và dễ bảo trì**.
+**Kết luận**: Nắm vững **interface cốt lõi**, chọn đúng **cấu trúc dữ liệu**, hiểu **equality/hashing**, và sử dụng **generics nâng cao** (ràng buộc, variance/PECS, generic math) sẽ giúp code C# của bạn **đúng, nhanh, và dễ bảo trì**.

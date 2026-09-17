@@ -1,11 +1,15 @@
 # Tài liệu tham khảo ngôn ngữ lập trình C# / .NET
 
-Bộ tài liệu tham chiếu **in-depth / advanced** cho ngôn ngữ C# trên nền **.NET 10 LTS** (C# **14**). Không phải giáo trình nhập môn: các khái niệm được trình bày dạng tham khảo nhanh kèm chi tiết nâng cao (semantics, version gates, pitfalls). Nếu chưa biết C#/.NET, bắt đầu bằng khóa học bên dưới, rồi dùng bộ này khi cần tra cứu sâu hơn.
+Bộ tài liệu tham chiếu **in-depth / advanced** cho ngôn ngữ C# trên nền **.NET 10 LTS** (C# **14**). Đây là **repo tra cứu theo chủ đề** (một file = một vùng ngôn ngữ/BCL: kiểu, LINQ, async, project/SDK, …) — **không** phải changelog “what's new”, không phải tutorial tuần tự, không thay [docs Microsoft](https://learn.microsoft.com/dotnet/csharp/).
 
-> **Baseline:** .NET **10** / C# **14** (GA 11/2025, hỗ trợ đến **14/11/2028**).  
-> Mục ghi **C# 15 / .NET 11 Preview** (Preview 7 · 08/2026; GA dự kiến ~11/2026) là *preview* — chưa dùng cho production.
+**Cách đọc:** mở đúng topic file ở mục lục dưới (ví dụ `Main` → [main-function.md](main-function.md), NuGet/AOT → [projects-packages.md](projects-packages.md)). Trong file: mục lục → quy tắc/semantics → ví dụ → **pitfalls** / version gate. Bảng C# 14 vs 15 ở [projects-packages.md §14](projects-packages.md#14-best-practices--checklist) chỉ là *cổng* sang topic, không đủ để code preview.
 
-Chu kỳ hỗ trợ: LTS ~ 3 năm; xen kẽ STS. .NET 8/9 EOS ~ cùng cửa sổ GA .NET 11 (**~10/11/2026**). Production dài hạn: **net10.0** → C# 14 mặc định. Checklist nâng cấp: [projects-packages.md](projects-packages.md).
+Không phải giáo trình nhập môn: giả định đã biết class/method/`if`. Nếu chưa biết C#/.NET, bắt đầu bằng khóa học bên dưới, rồi quay lại đây khi cần semantics, IL/entry, `IQueryable`, AOT, v.v.
+
+> **Baseline:** .NET **10** / C# **14** (GA 11/2025, hỗ trợ đến **14/11/2028**) — mặc định `net10.0`, `LangVersion` 14.  
+> Mục ghi **C# 15 / .NET 11 Preview** (Preview 7 · 08/2026; GA dự kiến ~11/2026) là *preview* — surface **đổi trước GA**, chưa dùng cho production. Cần SDK 11 + thường `<LangVersion>preview</LangVersion>`.
+
+Chu kỳ hỗ trợ: LTS ~ 3 năm; xen kẽ STS. .NET 8/9 EOS ~ cùng cửa sổ GA .NET 11 (**~10/11/2026**). Production dài hạn: **net10.0** → C# 14 mặc định. Checklist nâng cấp: [projects-packages.md](projects-packages.md). Entry/`Main`/TLS/`args`: [main-function.md](main-function.md).
 
 ---
 

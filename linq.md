@@ -1,8 +1,9 @@
 # LINQ (Language Integrated Query)
 
-> **Baseline:** .NET **10** / C# **14**. BCL/LINQ micro-opts khi nâng TFM — hot path vẫn đo BenchmarkDotNet.
+> **Baseline:** .NET **10** / C# **14**. BCL/LINQ micro-opts khi nâng TFM — hot path vẫn đo BenchmarkDotNet.  
+> Extension members (C# 14) **không** thay Standard Query Operators: LINQ vẫn là extension method trên `IEnumerable<T>` / `IQueryable<T>`. Toán tử custom: §9.
 
-**LINQ** đem cú pháp truy vấn vào C#, thống nhất cách làm việc với **tập hợp đối tượng**, **XML**, **CSDL**, **JSON**, **in-memory** và cả **stream async** (thông qua `IAsyncEnumerable<T>` + gói mở rộng).  
+**LINQ** đem cú pháp truy vấn vào C#, thống nhất cách làm việc với **tập hợp đối tượng**, **XML**, **CSDL**, **JSON**, **in-memory** và cả **stream async** (thông qua `IAsyncEnumerable<T>` + gói mở rộng). Cốt lõi không phải “SQL trong C#” mà là **toán tử trên chuỗi** (`Where`/`Select`/…) + **hai mô hình thực thi**: in-memory (`IEnumerable`) vs dịch biểu thức (`IQueryable`).
 
 ---
 
@@ -57,15 +58,19 @@ var q2 = from p in people
 ```
 
 Chọn cú pháp nào?  
-- **Method syntax** nhất quán, đầy đủ toán tử.  
-- **Query syntax** dễ đọc với `from/where/select/group/join`; nhưng không có sẵn cho một số toán tử nâng cao.
+- **Method syntax** nhất quán, đầy đủ toán tử (`DistinctBy`, `Chunk`, `MaxBy`… không có keyword).  
+- **Query syntax** dễ đọc với `from/where/select/group/join` nhiều range; `from` thứ hai = `SelectMany` (§4.2).
+
+Cả hai đều **không chạy** cho đến khi enumerate nếu chuỗi chỉ gồm toán tử deferred (§2). `var` ở đây là query object, không phải `List`.
 
 ---
 
 ## 2. Deferred vs Immediate execution
 
-- **Deferred execution**: `Where`, `Select`, `OrderBy`, `GroupBy`, `Join`… chỉ **xây dựng pipeline**; chưa chạy cho đến khi **enumerate** (`foreach`, `ToList`, `Count`, …).  
-- **Immediate execution**: `ToList`, `ToArray`, `ToDictionary`, `Count`, `Sum`, `First`… **kích hoạt** thực thi.
+Đây là chỗ LINQ **dễ đúng lúc debug, sai lúc production**.
+
+- **Deferred execution**: `Where`, `Select`, `SelectMany`, `OrderBy`, `GroupBy`, `Join`, `Skip`/`Take` (LINQ to Objects)… chỉ **xây dựng pipeline** (iterator / expression tree). Chưa đọc nguồn cho đến khi **enumerate**: `foreach`, `ToList`, `Count()`, `Any()`, `First`, …  
+- **Immediate execution**: `ToList`, `ToArray`, `ToDictionary`, `ToHashSet`, `ToLookup`, `Count`/`Sum`/`Average` (không predicate trên IQueryable vẫn hit DB), `First`/`Single`/`ElementAt`, `All`/`Any`/`Contains` — **kích hoạt** thực thi ngay.
 
 ```csharp
 var q = numbers.Where(x => x % 2 == 0); // chưa chạy
@@ -76,18 +81,73 @@ foreach (var n in q) Console.WriteLine(n);
 var list = q.ToList(); // chạy và materialize một lần
 ```
 
-**Lưu ý**: deferred giúp **lazy**, nhưng dễ gây **multiple enumeration** nếu duyệt nhiều lần. Dùng `ToList()` khi cần cố định kết quả và tránh lặp lại tính toán.
+### 2.1 Multiple enumeration
+
+Gán `var q = source.Where(...)` rồi gọi `q.Count()` **và** `foreach (q)` → nguồn bị đọc **hai lần**. Với mảng thì “chỉ chậm”; với `IEnumerable` là I/O, `yield` generator, hoặc EF `IQueryable` → **hai round-trip** / đọc stream hai lần (lần hai có thể throw).
+
+```csharp
+IEnumerable<string> lines = ReadLines(path).Where(l => l.Length > 0);
+var n = lines.Count();          // đọc hết file
+foreach (var l in lines) { }    // đọc lại — hoặc fail nếu stream đã dispose
+```
+
+Chốt kết quả: `ToList()` / `ToArray()` khi cần snapshot, khi nguồn có side-effect, hoặc khi truyền query ra ngoài method (lifetime DbContext).
+
+### 2.2 Capture & “query chạy lúc nào”
+
+Deferred **đóng** lambda + biến captured. Đổi biến **sau** khi tạo query, **trước** khi enumerate → predicate thấy giá trị **lúc chạy**, không lúc tạo:
+
+```csharp
+int min = 10;
+var q = nums.Where(n => n > min);
+min = 100;
+var list = q.ToList(); // lọc theo 100, không phải 10
+```
+
+Cùng cơ chế closure với vòng `for` (§10). EF: giá trị parameter được đóng vào expression lúc **translate/execute**, không lúc gõ `Where`.
+
+### 2.3 `GroupBy` deferred vs `ToLookup` immediate
+
+`GroupBy` trên `IEnumerable` **deferred** — chưa nhóm cho đến khi iterate (và khi iterate, LINQ to Objects thường **buffer toàn bộ** nhóm: deferred ≠ streaming từng phần tử xong là quên). `ToLookup` **chạy ngay**, cho indexer `lookup[key]`.
+
+### 2.4 IQueryable
+
+Deferred ở đây nghĩa là **chưa gửi SQL**. `ToListAsync()` / `CountAsync()` mới hit DB. Log SQL (`ToQueryString()`, EF logging) trước khi tối ưu — đừng đoán.
+
+### 2.5 Iterator: “deferred” vẫn tốn state
+
+`Where`/`Select` trên Objects là iterator: mỗi lần `GetEnumerator()` tạo state machine mới. Pipeline dài (`Where.Select.Where.Select`) = nhiều object nhỏ — thường rẻ hơn I/O, nhưng hot-path micro-benchmark có thể thua `for`. `ICollection<T>.Count` đi tắt; `IEnumerable` custom không `Count` → `Count()` **duyệt hết** (immediate + đắt).
+
+`OrderBy` deferred nhưng lần enumerate đầu **buffer + sort toàn bộ** — không phải streaming. `GroupBy` tương tự (§2.3, §4.4). Chỉ `Where`/`Select`/`Take` (Objects) gần với kéo từng phần tử.
 
 ---
 
 ## 3. LINQ to Objects vs IQueryable (EF/LINQ Providers)
 
-- **LINQ to Objects**: chạy trên `IEnumerable<T>` (in-memory). Lambda là **delegate** chạy trong .NET.  
-- **`IQueryable<T>`**: biểu diễn truy vấn **có thể dịch** sang hệ đích (SQL, OData…). Lambda là **expression tree**.
-  - **EF Core**: chỉ dịch được **tập con** toán tử/method; nếu không dịch được → (tuỳ cấu hình) ném ngoại lệ hoặc chuyển sang client-eval (nên tránh).
+- **LINQ to Objects**: chạy trên `IEnumerable<T>` (in-memory). Lambda là **delegate** (`Func<T,bool>`) — mọi method C# gọi được.  
+- **`IQueryable<T>`**: biểu diễn truy vấn **có thể dịch** sang hệ đích (SQL, OData…). Lambda là **expression tree** (`Expression<Func<…>>`).
+  - **EF Core**: chỉ dịch được **tập con** toán tử/method; nếu không dịch được → (tuỳ version/config) ném runtime exception, hoặc **client eval** (kéo cột về memory rồi lọc — dễ N+1 / kéo cả bảng).
   - Tránh gọi **method tuỳ ý** trong predicate/select vì **không thể dịch sang SQL**.
 
-**Quy tắc vàng**: Với EF, cố gắng giữ toàn bộ truy vấn **trên server** trước khi materialize (`ToListAsync`). Dùng `AsNoTracking()` nếu chỉ đọc để tối ưu.
+**Quy tắc vàng**: Với EF, giữ toàn bộ truy vấn **trên server** trước khi materialize (`ToListAsync`). `AsNoTracking()` nếu chỉ đọc. `Select` DTO sớm để không kéo navigation thừa.
+
+Nhận diện: `db.Users.Where(...)` là `IQueryable`; `db.Users.AsEnumerable().Where(...)` / `ToList()` giữa chừng là **LINQ to Objects** từ đó trở đi — SQL đã “đóng” (thường `SELECT *` / đến đoạn materialize).
+
+### 3.1 Bảng “có dịch được không” (tinh thần EF Core)
+
+| Trong lambda | Thường |
+|--------------|--------|
+| So sánh property, `&&` `\|\|`, `Contains` trên string, `StartsWith` | SQL |
+| `list.Contains(e.Id)` local list nhỏ | `IN` |
+| `Regex`, `File.*`, custom static helper, local function | **Không** / client |
+| `DateTime.Now` | Tùy version — hay dùng UTC server / `EF.Functions` |
+| `ToString()` format, interpolation phức tạp | Không ổn định |
+| Navigation `.Any(x => …)` | `EXISTS` |
+| `GroupBy` + `Sum`/`Count` | `GROUP BY` nếu hình dạng đúng |
+| `Select` DTO/`record` cùng assembly | Thường OK |
+| Gọi method instance trên entity (`user.IsAdmin()`) | **Không** trừ mapped |
+
+Khi nghi: `query.ToQueryString()` (EF) hoặc log. “Chạy được” ≠ “chạy trên server”.
 
 ---
 
@@ -100,17 +160,40 @@ var adults = people.Where(p => p.Age >= 18);
 var stringsOnly = objects.OfType<string>(); // bỏ phần tử không đúng kiểu
 ```
 
+`OfType<T>` vừa filter vừa cast (bỏ không khớp). `Cast<T>` throw nếu sai kiểu. EF: `OfType<T>` hữu ích TPH/TPT; `Where(x => x is T)` có thể không dịch.
+
 ### 4.2 Projection: `Select`, `SelectMany`
+
+`Select` **1→1**: mỗi phần tử nguồn một kết quả (cùng cardinality).  
+`SelectMany` **1→N rồi flatten**: mỗi phần tử nguồn một **chuỗi** con, nối thành một chuỗi phẳng (cross join khi hai `from`).
 
 ```csharp
 var names = people.Select(p => $"{p.FirstName} {p.LastName}");
 
-var allTags = posts.SelectMany(p => p.Tags); // flatten
+var allTags = posts.SelectMany(p => p.Tags); // flatten IEnumerable<IEnumerable<T>>
 // cross join:
 var pairs = from x in xs
             from y in ys
             select (x, y);
+// ≡ xs.SelectMany(x => ys, (x, y) => (x, y));
 ```
+
+Nhầm lẫn thường gặp:
+
+| Viết | Kết quả |
+|------|---------|
+| `posts.Select(p => p.Tags)` | `IEnumerable<List<string>>` (lồng) |
+| `posts.SelectMany(p => p.Tags)` | `IEnumerable<string>` (phẳng) |
+| `SelectMany` + collection `null` | `NullReferenceException` lúc enumerate — dùng `p.Tags ?? []` |
+| Query syntax `from a in xs from b in a.Children` | `SelectMany`, không phải `Select` |
+
+`SelectMany` overload `(x, y) => result` giữ **cả** phần tử ngoài và trong (như `from`/`select` có đủ range). EF: `SelectMany` navigation → `JOIN`/`CROSS APPLY`; filter trước `SelectMany` nếu không muốn explode rồi mới `Where`.
+
+Projection anonymous type / tuple: LINQ to Objects ổn; EF: `Select` DTO/`record` để materialize — đừng `Select` entity rồi loop lazy navigation (N+1).
+
+`SelectMany((x, i) => …)` có index — Objects; EF ít dịch. Flatten JSON/`List<List<T>>`: luôn `SelectMany`, không `Select` rồi `foreach` lồng nếu đã ở pipeline.
+
+---
 
 ### 4.3 Sorting: `OrderBy`, `ThenBy`, `Reverse`
 
@@ -121,18 +204,38 @@ var ordered = people.OrderBy(p => p.LastName)
 var desc = people.OrderByDescending(p => p.Age);
 ```
 
-**`OrderBy` ổn định**: phần tử bằng nhau giữ thứ tự ban đầu.
+**`OrderBy` ổn định** (LINQ to Objects): phần tử bằng nhau giữ thứ tự ban đầu. Gọi `OrderBy` lần hai **thay** sort, không phải then — dùng `ThenBy`.  
+`IQueryable`: sort trên server; collation SQL ≠ `StringComparer.Ordinal` — đừng giả định culture.  
+`.NET 7+`: `Order` / `OrderDescending` khi key là chính phần tử.
 
 ### 4.4 Grouping: `GroupBy`, `ToLookup`
 
 ```csharp
-var groups = people.GroupBy(p => p.City); // IEnumerable<IGrouping<string,Person>>
+var groups = people.GroupBy(p => p.City); // IEnumerable<IGrouping<string, Person>>
 
 ILookup<string, Person> byCity = people.ToLookup(p => p.City);
-var inHanoi = byCity["Hanoi"]; // fast lookups theo key
+var inHanoi = byCity["Hanoi"]; // lookup O(1) theo key; key thiếu → rỗng, không throw
 ```
 
-**`GroupBy`** deferred; **`ToLookup`** materialize ngay.
+**`GroupBy` (Objects):** deferred; lần enumerate đầu **đọc hết nguồn**, nhét vào lookup nội bộ, rồi yield từng `IGrouping`. Không phải streaming từng group khi nguồn vô hạn. Key `null` được phép (một nhóm). Equality key: anonymous type / record / tuple — `GroupBy(x => x.Name.ToLower())` tạo string mới mỗi phần tử (ổn) nhưng comparer mặc định ordinal culture-sensitive với `string` — cân nhắc `GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)`.
+
+Overload `GroupBy(key, element, resultSelector)` gom ngay, tránh giữ entity gốc:
+
+```csharp
+var counts = orders.GroupBy(o => o.CustomerId, (id, g) => new { id, n = g.Count() });
+```
+
+**EF `GroupBy`:** phải dịch được sang `GROUP BY`. `GroupBy` rồi `Select(g => g.Sum(...))` thường OK; `GroupBy` rồi materialize `IGrouping` entity đầy đủ có thể **không dịch** hoặc SQL nặng. Filter `Where` **trước** `GroupBy` (SQL `WHERE`) vs `Where` trên group sau ( `HAVING` / client). `AsEnumerable()` trước `GroupBy` = nhóm in-memory sau khi kéo rows.
+
+**`ToLookup`:** immediate, indexer, cho phép duplicate key (khác `ToDictionary` throw). Dùng khi cần tra nhiều lần theo key; `GroupBy` khi compose thêm LINQ (deferred).
+
+Query syntax: `group x by k into g` — `into` tiếp tục query trên các nhóm (`g.Key`, `g.Count()`).
+
+Nhóm rỗng: `GroupBy` không yield nhóm không có phần tử (khác SQL `GROUP BY` trên bảng dim). Muốn mọi key kể cả 0 count: left join tập key × `GroupBy` / `ToLookup` + duyệt key phía ngoài.
+
+`IGrouping<TKey,T>` implement `IEnumerable<T>` — `g.Where`/`g.Select` là Objects trên nhóm **đã materialize** (sau khi query chạy). EF: đừng `GroupBy(e => e).Select(g => g.First())` kiểu “lấy entity đầy đủ mỗi nhóm” nếu SQL không dịch — dùng `Select` cột + key, hoặc window SQL thô.
+
+---
 
 ### 4.5 Joining: `Join`, `GroupJoin`, Left Join
 
@@ -154,11 +257,13 @@ var left = from c in customers
            select new { c, o }; // o có thể null
 ```
 
-**Composite key**: dùng **anonymous type** hoặc **tuple**:
+**Composite key**: dùng **anonymous type** hoặc **tuple** (cùng tên/thứ tự):
 
 ```csharp
-join o in orders on new { c.Id, c.Region } equals new { o.CustomerId, o.Region }
+join o in orders on new { c.Id, c.Region } equals new { Id = o.CustomerId, o.Region }
 ```
+
+`equals` **không** đối xứng như SQL `ON` tùy ý — trái = outer, phải = inner. Method syntax: `Join` / `GroupJoin`. Nested loop `SelectMany` + `Where` = inner join không tối ưu bằng `Join` (hash) trên Objects.
 
 ### 4.6 Set: `Distinct`, `Union`, `Intersect`, `Except`
 
@@ -169,6 +274,8 @@ var inter = a.Intersect(b);
 var diff  = a.Except(b);
 ```
 
+Mặc định: `EqualityComparer<T>.Default` (reference cho class không override). Entity EF: `Distinct` trên DTO/`Select` cột, không phải instance tracker. `DistinctBy` (net6+) theo key; EF dịch tùy version — kiểm tra SQL.
+
 ### 4.7 Quantifiers: `Any`, `All`, `Contains`
 
 ```csharp
@@ -176,6 +283,8 @@ bool anyAdult = people.Any(p => p.Age >= 18);
 bool allAdult = people.All(p => p.Age >= 18);
 bool has42 = numbers.Contains(42);
 ```
+
+`Any()` không predicate: “có phần tử?” — rẻ hơn `Count() > 0` (Objects dừng sớm; EF `EXISTS`). `All` trên rỗng = **true**. `Contains` trên `IQueryable` với local collection → SQL `IN` (giới hạn số phần tử SQL).
 
 ### 4.8 Element: `First`, `Single`, `Last`, `ElementAt`
 
@@ -187,12 +296,16 @@ var only = numbers.Single(n => n == 5);    // throw nếu != 1 phần tử phù 
 var onlyOr = numbers.SingleOrDefault();
 ```
 
+`First` vs `Single`: `Single` phải **đúng một** (EF `TOP 2`). API “get by id”: `Single`/`SingleOrDefault` nếu id unique; list/filter: `FirstOrDefault`. `Last` trên `IQueryable` cần `OrderBy` — không thì SQL không xác định. `default(T)` với `int` = 0: đừng nhầm “không có” với giá trị 0 — dùng `FirstOrDefault` + nullable / `bool` pattern.
+
 ### 4.9 Partitioning: `Skip`, `Take`, `SkipWhile`, `TakeWhile`
 
 ```csharp
 var page = items.Skip((pageIndex-1)*pageSize).Take(pageSize);
 var untilNeg = numbers.TakeWhile(n => n >= 0);
 ```
+
+EF: `Skip`/`Take` cần `OrderBy` ổn định (paging). `SkipWhile`/`TakeWhile` thường **không** dịch SQL. .NET 6+: `Take(Range)` / `..` trên Objects.
 
 ### 4.10 Aggregation: `Count`, `Sum`, `Min`, `Max`, `Average`, `Aggregate`
 
@@ -202,6 +315,8 @@ int sum   = numbers.Sum();
 var total = numbers.Aggregate(0, (acc, x) => acc + x);
 ```
 
+Immediate. `Aggregate` trên EF **hiếm khi** dịch — giữ Objects. `Min`/`Max` rỗng throw; `MinBy`/`MaxBy` (net6+). `Count` predicate vs `Where`+`Count`: Objects tương đương; EF thường cùng `COUNT`/`SUM(CASE`.
+
 ### 4.11 Generation/Conversion: `Range`, `Repeat`, `Empty`, `ToList`, `ToArray`, `ToDictionary`, `ToHashSet`…
 
 ```csharp
@@ -210,19 +325,23 @@ var rep = Enumerable.Repeat("A", 3); // A A A
 var empty = Enumerable.Empty<int>();
 
 var list = q.ToList();
-var dict = people.ToDictionary(p => p.Id); // chú ý key trùng
+var dict = people.ToDictionary(p => p.Id); // chú ý key trùng → throw
 var set  = items.ToHashSet(StringComparer.OrdinalIgnoreCase);
 ```
+
+`ToDictionary` key trùng throw; `ToLookup` thì không. `Enumerable.Empty<T>()` cached — tốt hơn `new T[0]` khi return rỗng.
 
 ### 4.12 `Zip`, `Chunk`, `Append/Prepend`, `SequenceEqual`, `DefaultIfEmpty`
 
 ```csharp
-var zipped = xs.Zip(ys, (x,y) => (x,y)); // ghép 2 dãy theo vị trí
+var zipped = xs.Zip(ys, (x,y) => (x,y)); // ghép 2 dãy theo vị trí; dừng khi một bên hết
 var chunks = numbers.Chunk(100);         // tách khối 100 phần tử
 var withHead = seq.Prepend(head);
 bool same = seq1.SequenceEqual(seq2);
 var withDefault = seq.DefaultIfEmpty(0); // nếu rỗng → có 1 phần tử 0
 ```
+
+`DefaultIfEmpty` = mảnh left join. `Chunk` Objects; EF paging dùng `Skip`/`Take` có `OrderBy`.
 
 ---
 
@@ -240,16 +359,36 @@ var withDefault = seq.DefaultIfEmpty(0); // nếu rỗng → có 1 phần tử 0
 | `let t = expr select ...` | (giới thiệu biến trung gian → lồng `Select`) |
 | `into g ...` | tiếp tục với kết quả `GroupJoin`/`group` |
 
+`let` = `Select` anonymous giữ biến — EF dịch được nếu `expr` dịch được. Query syntax **không** có `Distinct`/`Chunk` keyword → chấm method xen: `(from … select x).Distinct()`.
+
 ---
 
 ## 6. IQueryable & biểu thức (Expression)
 
-- `IQueryable<T>` mở rộng `IEnumerable<T>` bằng **`Expression`** để provider dịch sang ngôn ngữ đích.  
-- `AsQueryable()` biến `IEnumerable` thành `IQueryable` (nhưng không tự có provider).  
+- `IQueryable<T>` mở rộng `IEnumerable<T>` bằng **`Expression`** + `Provider`. Cùng “hình” `Where(x => …)` nhưng overload `Where(Expression<Func<…>>)` — compiler nhét **cây**, không compile sẵn IL của predicate.  
+- `AsQueryable()` trên `List<T>` cho `IQueryable` **không** có SQL — provider LINQ to Objects. Test “query EF” bằng `AsQueryable()` **không** chứng minh dịch SQL.  
 - Trong EF Core:
-  - Tránh phương thức **không thể dịch** (`Regex.IsMatch`, custom helpers…) trong query.  
-  - Tránh **materialize sớm** (ví dụ `ToList()` giữa chừng) nếu muốn server lọc/sort.  
-  - Dùng `AsNoTracking()` cho truy vấn chỉ-đọc; `AsSplitQuery()` (khi cần tách include lớn).
+  - Tránh phương thức **không thể dịch** (`Regex.IsMatch`, `string.Format` phức tạp, custom helpers, `DateTime.Now` vs `DateTime.UtcNow` tùy version, local function, `int.Parse`).  
+  - Tránh **materialize sớm** (`ToList()` giữa chừng) nếu muốn server lọc/sort — sau `AsEnumerable()`/`ToList()` mọi `Where` chạy in-memory.  
+  - Dùng `AsNoTracking()` cho chỉ-đọc; `AsSplitQuery()` khi Include lớn (cartesian explosion).  
+  - `EF.Functions` / `EF.Property` / `EF.Constant` khi cần hint dịch.  
+  - Client eval ẩn: `Select` gọi method C# trên entity sau khi SQL thiếu cột → exception hoặc query tệ. Bật logging SQL.  
+  - Subquery `Any`/`Count` trong `Where` → `EXISTS`; navigation collection `Where` không `Include` vẫn filter — khác `Include` rồi lọc in-memory.
+
+```csharp
+// Dịch được (tinh thần)
+db.Users.Where(u => u.Email.EndsWith("@a.com")).Select(u => u.Id);
+
+// Thường vỡ / client
+db.Users.Where(u => MyUtil.IsCorp(u.Email));
+db.Users.Where(u => File.Exists(u.Path));
+```
+
+Composition: giữ `IQueryable` qua layer (`IQueryable<User> Query()`) dễ leak DbContext và stack filter không dịch. Ưu tiên method nhận `IQueryable` trả `IQueryable` **trong cùng unit of work**, materialize ở biên (handler).
+
+`Expression<Func<T,bool>>` compile sang SQL từng node: member access, constant, `Enumerable.Contains` local. Closure bắt `DateTime.Now` trong Objects = lúc enumerate; trong EF = parameter **lúc execute** (thường OK) vs `DateTime.Now` **trong cây** có thể translate thành SQL `GETDATE` hoặc fail — đừng nhét clock vào expression nếu chưa kiểm SQL.
+
+`IQueryable` implement `IEnumerable` — `foreach` trên `DbSet` **sync-over-store** (blocking). Dùng async execute APIs.
 
 ---
 
@@ -257,7 +396,7 @@ var withDefault = seq.DefaultIfEmpty(0); // nếu rỗng → có 1 phần tử 0
 
 - **Enumerable async**: dùng `IAsyncEnumerable<T>` + `await foreach`.  
 - **Toán tử async cho `IAsyncEnumerable<T>`**: cần gói mở rộng (ví dụ `System.Linq.Async`) để có `WhereAwait`, `SelectAwait`, `ToListAsync`, `FirstOrDefaultAsync` trên async streams.  
-- **EF Core**: cung cấp **`ToListAsync`, `SingleAsync`, `AnyAsync`…** trên `IQueryable` để thực thi async với DB.
+- **EF Core**: **`ToListAsync`, `SingleAsync`, `AnyAsync`…** trên `IQueryable` — đây **không** phải LINQ to Objects async; chúng execute SQL async. `foreach` đồng bộ trên `DbSet` chặn thread.
 
 ```csharp
 await foreach (var line in ReadLinesAsync(path).Where(x => x.Length > 0))
@@ -267,29 +406,44 @@ await foreach (var line in ReadLinesAsync(path).Where(x => x.Length > 0))
 var users = await db.Users.Where(u => u.Active).ToListAsync();
 ```
 
+Đừng `.Result` trên `ToListAsync` (deadlock sync-over-async). Cancellation: `ToListAsync(ct)`.
+
 ---
 
 ## 8. PLINQ (Parallel LINQ)
 
-- `AsParallel()` chạy LINQ trên nhiều core. Dùng cho **tác vụ CPU-bound** thuần (không I/O).
+- `AsParallel()` chạy LINQ trên nhiều core. Dùng cho **tác vụ CPU-bound** thuần trên **in-memory** đã materialize, **không** I/O, **không** EF.
 
 ```csharp
 var result = data.AsParallel()
                  .WithDegreeOfParallelism(Environment.ProcessorCount)
-                 .AsOrdered()                 // nếu cần giữ thứ tự
+                 .AsOrdered()                 // nếu cần giữ thứ tự — trả giá merge
                  .Where(ComputeHeavy)         // thuần, không side-effects
                  .Select(Transform)
                  .ToList();
 ```
 
-**Cảnh báo**: Side-effects, cập nhật shared state → cần đồng bộ hoặc tránh. Không áp dụng cho LINQ to SQL/EF.
+### 8.1 Khi **không** dùng PLINQ
+
+- Nguồn `IQueryable` / EF: `AsParallel()` **không** song song hóa SQL; thường kéo query rồi (lỡ) parallelize client — hoặc API không hợp lệ. Parallel DB = nhiều query/`Task`, không PLINQ.  
+- I/O (`HttpClient`, disk): thread pool noose; dùng `async` / `Parallel.ForEachAsync`.  
+- Chuỗi ngắn / predicate rẻ: overhead partition > lợi. Đo BenchmarkDotNet.  
+- Cần thứ tự ổn + `AsOrdered()` trên pipeline dài: có thể **chậm hơn** tuần tự.  
+- Side-effect / `List.Add` không khóa / `Random` instance / `DateTime.Now` trong predicate → data race. `ConcurrentBag` vẫn thường kém hơn `Select` thuần rồi materialize.  
+- ASP.NET request path: tranh CPU với request khác; giới hạn DOP, thường **không** PLINQ per-request.  
+- `AsSequential()` khi đoạn sau không parallel-safe.
+
+**Cảnh báo**: exception trong worker bọc `AggregateException`. `WithMergeOptions` / `WithExecutionMode(ForceParallelism)` chỉ khi đã đo. Không phải “bật là nhanh”.
+
+`AsParallel()` trên `IEnumerable` đã là query EF materialize nhầm (`.AsEnumerable().AsParallel()`) = kéo hết bảng rồi CPU — thảm họa. Đúng: SQL filter/`Take` trước, `ToListAsync`, rồi (nếu đo được) parallel **CPU** trên list nhỏ.
+
+`WithCancellation(token)` để abort; không cancel → thread pool kẹt lúc shutdown ASP.NET.
 
 ---
 
 ## 9. Custom LINQ operators (viết toán tử riêng với extension methods)
 
-- LINQ to Objects dựa vào **extension methods** trả `IEnumerable<T>` (iterator + `yield return`).  
-- Bạn có thể viết toán tử tuỳ biến bằng cách tạo static extension methods trong static class:
+LINQ to Objects dựa vào **extension methods** trả `IEnumerable<T>` (iterator + `yield return`) — **deferred** nếu bạn `yield`, **immediate** nếu `ToList` bên trong (đừng làm vậy trừ khi toán tử vốn immediate).
 
 ```csharp
 public static class LinqEx
@@ -311,22 +465,63 @@ public static class LinqEx
 }
 ```
 
-- Gợi ý: nhiều operator hữu ích đã có sẵn trong .NET hiện đại (`DistinctBy`, `MaxBy`, `MinBy`, `Chunk`, …).
+Gợi ý: nhiều operator đã có trong BCL (`DistinctBy`, `MaxBy`, `MinBy`, `Chunk`, `CountBy` trên TFM mới — kiểm tra `net10.0`). Viết đè tên chuẩn (`Where`) = nightmare overload.
+
+### 9.1 Extension members (C# 14) vs toán tử LINQ
+
+C# **14** thêm `extension(T)` blocks (method/property/operator trên receiver) — xem [methods.md §12](methods.md#12-this-và-extension-method--extension-members) / [oop.md](oop.md). Dùng khi:
+
+- Property/operator trên type bạn không sở hữu (`extension(string s) { public bool IsBlank => … }`).  
+- Nhóm API theo receiver, không phải chuỗi query.
+
+**Không** thay `IEnumerable` operators: query LINQ cần `this IEnumerable<T>` (hoặc `IQueryable`) + `Func`/`Expression` + `yield` để compose với `Where`/`Select`. Extension member **property** không nhận lambda selector; không tự thành `IQueryable` translator.
+
+Muốn toán tử chạy trên EF: không đủ `yield` trên `IEnumerable` — phải `IQueryable` + `Expression` (hoặc EF.Functions). Custom `WhereX(this IQueryable<T>)` trả `query.Where(expr)` với cây dịch được. Gọi custom `IEnumerable` extension trên `IQueryable` → bind nhầm **Objects** (cast/`AsEnumerable` ẩn) → kéo cả bảng.
+
+```csharp
+// Nguy hiểm: IQueryable bind vào extension IEnumerable
+public static IEnumerable<User> Active(this IEnumerable<User> s)
+    => s.Where(u => u.Active); // nếu gọi db.Users.Active() có thể client-eval
+
+public static IQueryable<User> Active(this IQueryable<User> s)
+    => s.Where(u => u.Active); // SQL WHERE
+```
+
+Prefer BCL / package (`System.Linq.Async`) trước khi viết thêm.
+
+C# 14 extension **indexer** không có (indexer extension = **C# 15 preview** — [oop.md](oop.md)). Đừng chờ `xs[1..]` custom qua extension block thay `ElementAt` trong query EF.
 
 ---
 
 ## 10. Best practices & Pitfalls
 
-1. **Hiểu deferred execution**: tránh multiple enumeration vô tình; materialize (`ToList`) khi cần snapshot.  
-2. **Null-safety & rỗng**: `First()` ném lỗi nếu rỗng; dùng `FirstOrDefault()` + xử lý `default`.  
-3. **Distinct/Dictionary với đối tượng phức tạp**: truyền `IEqualityComparer<T>` hoặc override equality.  
-4. **Chuẩn so sánh chuỗi**: dùng `StringComparer.Ordinal/OrdinalIgnoreCase` rõ ràng culture.  
-5. **Hiệu năng**: LINQ rõ ràng nhưng có overhead; trong hot-path cân nhắc `for`/`Span<T>`.  
-6. **EF/IQueryable**: đừng chèn method không dịch được; tránh client-eval; ghép `Where`/`Select` trước khi `ToListAsync`.  
-7. **Vòng lặp và biến captured**: cẩn thận **closure** trong lambda (đặc biệt khi tạo delegates trong vòng `for`).  
-8. **Exceptions**: `Single()` rất nghiêm – chỉ dùng khi chắc chắn có **đúng 1** phần tử; nếu nghi ngờ dùng `FirstOrDefault()` + kiểm tra.  
-9. **PLINQ**: chỉ cho CPU-bound, không I/O, tránh side-effects.  
-10. **Compose nhỏ, test dễ**: chia truy vấn thành biến trung gian đặt tên bằng `var step1 = ...; var step2 = step1.Where(...);`.
+1. **Deferred**: multiple enumeration; materialize khi snapshot / I/O / rời DbContext.  
+2. **Closure**: lambda bắt biến vòng lặp / `min` đổi trước `ToList` — copy local (`var age = item.Age`) trước khi đóng query. `foreach` hiện đại mỗi iter một biến; `for` + `i` vẫn cổ điển nguy hiểm khi **defer** `queries.Add(() => list[i])`.  
+3. **Null-safety & rỗng**: `First()` ném nếu rỗng; `FirstOrDefault` + `default(T)` với value type.  
+4. **Distinct/Dictionary**: comparer hoặc `DistinctBy`; `ToDictionary` throw trùng key.  
+5. **Chuỗi**: `StringComparer.Ordinal/OrdinalIgnoreCase` — SQL collation khác.  
+6. **Hiệu năng**: LINQ rõ ràng, có delegate/iterator overhead; hot-path `for`/`Span<T>`. `Count != 0` vs `Any()`.  
+7. **EF/IQueryable**: method không dịch; tránh client-eval; `Where`/`Select` trước `ToListAsync`; đừng `IEnumerable` extension trên `DbSet` nếu muốn SQL.  
+8. **`Select` vs `SelectMany`**: lồng vs phẳng; `from` thứ hai = `SelectMany`.  
+9. **`GroupBy`**: Objects buffer; EF `GROUP BY` hạn chế; `ToLookup` immediate.  
+10. **`Single()`**: đúng 1 phần tử; nghi thì `FirstOrDefault` + kiểm tra.  
+11. **PLINQ**: CPU-bound in-memory, không I/O/EF, đo trước, không side-effect.  
+12. **Compose nhỏ**: `var adults = …Where; var names = adults.Select` — dễ log `ToQueryString()`.
+
+### 10.1 Closure trong query — ví dụ `for`
+
+```csharp
+var actions = new List<Func<int>>();
+for (int i = 0; i < 3; i++)
+    actions.Add(() => i);          // mọi delegate thấy i == 3 sau vòng
+for (int i = 0; i < 3; i++)
+{
+    var copy = i;
+    actions.Add(() => copy);       // 0,1,2
+}
+```
+
+LINQ deferred = cùng bẫy: `queries.Add(source.Where(_ => _.Id == i))` rồi đổi `i`. `foreach (var item in items)` từ C# 5 mỗi vòng một `item` — an toàn hơn `for`. EF parameter: đóng giá trị lúc **execute**; loop `foreach (var id in ids) db.Users.Where(u => u.Id == id)` = N query (hoặc dùng `Contains`).
 
 ---
 
@@ -366,4 +561,4 @@ IEnumerable<T> Page<T>(IEnumerable<T> src, int page, int size)
 
 ---
 
-**Kết luận**: LINQ giúp code **khai báo, ngắn gọn, dễ đọc**, đồng thời đủ mạnh để **kết hợp** với EF/Providers, **song song** (PLINQ), và **async streams**. Nắm chắc **toán tử chuẩn**, hiểu **deferred vs immediate**, phân biệt **IEnumerable/IQueryable**, và áp dụng **best practices** là chìa khoá để có truy vấn vừa **đúng** vừa **nhanh**.
+**Kết luận**: LINQ giúp code **khai báo, ngắn gọn, dễ đọc**, đồng thời đủ mạnh để **kết hợp** với EF/Providers, **song song** (PLINQ), và **async streams**. Nắm chắc **toán tử chuẩn**, hiểu **deferred vs immediate**, phân biệt **IEnumerable/IQueryable**, `Select`/`SelectMany`/`GroupBy`, closure lúc enumerate, **khi không** dùng PLINQ, và custom operator **không** nhầm extension members C# 14 — chìa khoá để truy vấn vừa **đúng** vừa **nhanh**.
