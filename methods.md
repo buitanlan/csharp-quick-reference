@@ -1,6 +1,6 @@
 # Phương thức (Method) trong C#
 
-> **Baseline:** .NET **10** / C# **14**. Extension members / `params` collections: xem §11–12. Extension indexer: **C# 15 preview** → [oop.md §6.4](oop.md#64-extension-indexers-c-15-preview).
+> **Baseline:** .NET **10** / C# **14**. Extension members / `params` collections: xem §11–12. Extension indexer: **C# 15** → [oop.md §6.4](oop.md#64-extension-indexers-c-15).
 
 Trong C#, **phương thức (method)** là đơn vị cơ bản để đóng gói logic và định nghĩa hành vi cho một kiểu (`class`, `struct`, `record`, v.v.).  
 
@@ -308,7 +308,7 @@ unsafe
 }
 ```
 
-**So sánh:** `ref`/`Span` = managed alias, GC-aware. `T*` = không bounds-check. **C# 15 PREVIEW** nới khai báo pointer khỏi `unsafe`, dereference vẫn unsafe — [memory-spans.md §9.1](memory-spans.md#91-memory-safety-c-15-preview).
+**So sánh:** `ref`/`Span` = managed alias, GC-aware. `T*` = không bounds-check. **Unsafe Evolution** (preview, không phải C# 15 mặc định) nới khai báo pointer khỏi `unsafe`, dereference vẫn unsafe — [memory-spans.md §9.1](memory-spans.md#91-memory-safety-c-15-preview).
 
 **Vì sao / Khi nào `unsafe` trên method:** P/Invoke.fill buffer. Không đánh `unsafe` cả class nếu chỉ một method cần.
 
@@ -754,7 +754,7 @@ _ = IEnumerable<int>.Empty;
 
 Chi tiết OOP (so sánh, generic block, pitfalls): [oop.md — §8 Extension members](./oop.md#8-extension-members-c-14).
 
-> **C# 15 Preview:** extension **indexer** trong `extension` block — *preview*, chưa GA.
+> **C# 15:** extension **indexer** trong `extension` block — mặc định trên `net11.0` từ RC1, không có trên C# 14.
 
 ### 12.4 Lưu ý khi thiết kế extension
 
@@ -975,7 +975,7 @@ var once = TakePositive(ReadDb()).ToList();
 
 ## 14. Tài liệu liên quan
 
-- **OOP / extension members**: [oop.md — §8](./oop.md#8-extension-members-c-14) — *khối `extension`, property/static/operator.* Indexer extension: [oop.md §6.4](./oop.md#64-extension-indexers-c-15-preview) *(preview)*.
+- **OOP / extension members**: [oop.md — §8](./oop.md#8-extension-members-c-14) — *khối `extension`, property/static/operator.* Indexer extension: [oop.md §6.4](./oop.md#64-extension-indexers-c-15) (C# 15).
 - **Delegate & Lambda**: [delegates-lambdas.md](./delegates-lambdas.md) — *callback, closure, modifier trên lambda (C# 14).*
 - **Chương bất đồng bộ**: [async.md](./async.md) — *async/await, **Task vs ValueTask**, exception/cancellation, async streams (`IAsyncEnumerable<T>`, `await foreach`).*  
   `ValueTask` **không** phải parameter modifier và **không** thuộc file này: dùng khi hot-path async hay hoàn thành đồng bộ (tránh alloc `Task`) — quy tắc pool/`AsTask`/không await hai lần nằm hết ở `async.md`.

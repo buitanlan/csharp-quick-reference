@@ -1,6 +1,6 @@
 # Hệ thống kiểu dữ liệu (Common Type System)
 
-> **Baseline:** .NET **10** / C# **14**. Mục [18. Union types](#18-union-types-c-15-preview) là **PREVIEW (.NET 11 / C# 15)** — chưa GA.
+> **Baseline:** .NET **10** / C# **14**. Mục [18. Union types](#18-union-types-c-15) là **C# 15** (mặc định trên `net11.0` từ RC1 · 09/2026) — chưa thuộc baseline LTS.
 
 C# là một ngôn ngữ `strongly typed`, có nghĩa là các kiểu dữ liệu được sử dụng rất chặt chẽ, và bạn luôn phải 
 xác định kiểu cụ thể của một biến, hằng hoặc biểu thức. Vì C# là ngôn ngữ được thiết kế cho .NET nên nó hỗ trợ 
@@ -64,7 +64,7 @@ sẽ dùng các thông tin này để đảm bảo an toàn kiểu khi nó cấp
     - [15.3 Pattern matching](#153-pattern-matching)
   - [16. Unsafe \& unmanaged types (overview), function pointers](#16-unsafe--unmanaged-types-overview-function-pointers)
   - [17. Sơ đồ “type tree” (ASCII)](#17-sơ-đồ-type-tree-ascii)
-  - [18. Union types (C# 15) — **PREVIEW**](#18-union-types-c-15-preview)
+  - [18. Union types (C# 15)](#18-union-types-c-15)
 
 ---
 
@@ -410,7 +410,7 @@ Console.WriteLine(Enum.IsDefined(weird)); // False
 bool canWrite2 = (rights & FileAccess.Write) != 0;
 ```
 
-**Pitfall:** mặc định underlying `int`; interop native `byte`/`uint` phải khai báo `enum E : byte`. Đừng dùng enum cho tập giá trị *mở* liên tục thay đổi — union/closed hierarchy (C# 15 preview) hoặc class hierarchy rõ hơn.
+**Pitfall:** mặc định underlying `int`; interop native `byte`/`uint` phải khai báo `enum E : byte`. Đừng dùng enum cho tập giá trị *mở* liên tục thay đổi — union/`closed` hierarchy (C# 15) hoặc class hierarchy rõ hơn.
 
 **Vì sao / Khi nào dùng:** tập đóng nhỏ, flags quyền. Không dùng enum làm “state machine lớn” nếu cần dữ liệu kèm theo (`Open(float percent)` → record/union).
 
@@ -805,7 +805,7 @@ if (row is [1, .. var rest, 3])
     Console.WriteLine(rest.Length); // 1 — list pattern
 ```
 
-**So sánh với cast:** pattern không ném; `switch` exhaustiveness trên union/`closed` (C# 15 preview) mạnh hơn `if-else` + `_`.
+**So sánh với cast:** pattern không ném; `switch` exhaustiveness trên union/`closed` (C# 15) mạnh hơn `if-else` + `_`.
 
 **Pitfall:** `switch` trên `object` **không** exhaustive trừ `closed`/union. `is T` với `T` nullable value: `is int?` ít dùng — `is int n` đã phủ `HasValue`.
 
@@ -819,7 +819,7 @@ Union **Try-Both**: [§18.3](#183-pattern-matching--tính-đầy-đủ-exhaustiv
 - **Unmanaged types**: không chứa reference; có thể dùng trong `sizeof`, `stackalloc`, `unmanaged` constraint.  
 - **Function pointers** (C# 9, unsafe): `delegate*<int, void>` — hiệu năng cao khi interop/native, nhưng mất an toàn kiểu ở C# mức cao; đa phần nên dùng **delegate**.
 
-**Vì sao / Khi nào dùng:** P/Invoke, serialization zero-copy. Mặc định: `Span`/`MemoryMarshal`. **C# 15 PREVIEW** tách “khai báo pointer” khỏi “dereference” — [memory-spans.md §9.1](memory-spans.md#91-memory-safety-c-15-preview).
+**Vì sao / Khi nào dùng:** P/Invoke, serialization zero-copy. Mặc định: `Span`/`MemoryMarshal`. Tách “khai báo pointer” khỏi “dereference” là **Unsafe Evolution** (vẫn preview, không phải C# 15 mặc định) — [memory-spans.md §9.1](memory-spans.md#91-memory-safety-c-15-preview).
 
 ---
 
@@ -841,14 +841,14 @@ object
    └─ dynamic (runtime-bound)
 ```
 
-Union (C# 15 preview) không thay cây này — chúng *ghép* case type đã có. `closed` hierarchy vẫn là class/record trên nhánh reference.
+Union (C# 15) không thay cây này — chúng *ghép* case type đã có. `closed` hierarchy vẫn là class/record trên nhánh reference.
 
 ---
 
-## 18. Union types (C# 15) — PREVIEW
+## 18. Union types (C# 15)
 
-> **PREVIEW (.NET 11 / C# 15)** — chưa phải baseline .NET 10 / C# 14.  
-> Yêu cầu: .NET 11 Preview (hoặc tương đương) + `<LangVersion>preview</LangVersion>`. Cú pháp/semantics có thể đổi trước GA.
+> **C# 15 / .NET 11** — ổn định từ **RC1** (08/09/2026). Trên `net11.0`, C# 15 là mặc định: **không** cần `<LangVersion>preview</LangVersion>`.  
+> Chưa thuộc baseline .NET 10 / C# 14. GA .NET 11 dự kiến ~11/2026 (RC1 đã có go-live).
 
 C# 15 giới thiệu **union types** — kiểu có thể là đúng một trong số các kiểu thành viên đã xác định (tập đóng). Tương tự *discriminated unions* (F#) / *union types* (TypeScript), theo phong cách C#.
 
@@ -866,7 +866,7 @@ public union Pet(Cat, Dog, Bird);
 
 `Pet` là một union type có thể chứa giá trị thuộc một trong ba kiểu: `Cat`, `Dog`, hoặc `Bird`.
 
-**Vì sao / Khi nào dùng:** mô hình “đúng một trong N dạng” *không* cần base class chung (kết quả parse, event, đơn vị đo). Cần cây OOP + member dùng chung → `closed` ở [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
+**Vì sao / Khi nào dùng:** mô hình “đúng một trong N dạng” *không* cần base class chung (kết quả parse, event, đơn vị đo). Cần cây OOP + member dùng chung → `closed` ở [oop.md §2.6](oop.md#26-closed-hierarchies-c-15).
 
 ### 18.2 Gán giá trị & chuyển đổi ngầm định
 
@@ -895,7 +895,7 @@ string name = pet switch
 
 Nếu thêm một case mới vào `Pet`, compiler sẽ cảnh báo tại tất cả `switch` chưa xử lý case đó.
 
-**Try-Both matching (Preview 7+):** khi pattern áp lên giá trị union, compiler thử pattern trên **chính instance union**; nếu fail thì thử trên **`Value` chứa bên trong**. Do đó `pet is Dog d` và pattern trên wrapper đều có thể khớp — xác nhận bản preview (có thể tinh chỉnh trước GA).
+**Try-Both matching** (từ Preview 7, giữ trong C# 15): khi pattern áp lên giá trị union, compiler thử pattern trên **chính instance union**; nếu fail thì thử trên **`Value` chứa bên trong**. Do đó `pet is Dog d` và pattern trên wrapper đều có thể khớp.
 
 Áp dụng type / declaration / list / recursive pattern. Ý tưởng: vừa nhận diện `Pet`, vừa nhận diện `Cat` bên trong.
 
@@ -920,11 +920,13 @@ if (pet is Dog)                         // false — Value là Cat
 
 Custom union (struct discriminator, tránh box): implement `HasValue` + `TryGetValue(out T)` — compiler ưu tiên non-boxing access thay vì `Value` kiểu `object`.
 
-Runtime: `UnionAttribute` / `IUnion` (`System.Runtime.CompilerServices`) — BCL từ các preview gần đây. Learn: [C# 15 unions](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [blog](https://devblogs.microsoft.com/dotnet/csharp-15-union-types/).
+Runtime: `UnionAttribute` / `IUnion` (`System.Runtime.CompilerServices`) có trong BCL .NET 11. Analyzer đọc case qua `ITypeSymbol.UnionCaseTypes` (tên API `CSharp15` từ RC1). Learn: [C# 15 unions](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15).
 
-Hierarchy OOP đóng (cùng exhaustiveness nhưng *kế thừa*): xem `closed` ở [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
+Hierarchy OOP đóng (cùng exhaustiveness nhưng *kế thừa*): xem `closed` ở [oop.md §2.6](oop.md#26-closed-hierarchies-c-15).
 
-**Pitfall preview:** `var` pattern / một số property pattern không unwrap như type pattern — đọc speclet từng bản SDK. Đừng dùng union trên production .NET 10.
+**JSON (`System.Text.Json`, .NET 11):** serialize = JSON của **case đang active**. Không envelope, không `$type`. `union IntOrString(int, string)` phân biệt được vì JSON number ≠ JSON string. Hai record đều là object thì deserialize **mơ hồ** — `[JsonUnion(TypeClassifier = typeof(JsonUnionTypeStructuralClassifier))]` phân theo tên property (phải scan payload; đổi shape là đổi phân loại). Contract mới do bạn kiểm soát: `closed` + discriminator, không dùng union. Query string, route, header, form **không** bind union (chỉ chỗ đi qua STJ: body, SignalR JSON, Blazor interop).
+
+**Pitfall:** `var` pattern không unwrap giống type pattern trong mọi trường hợp — đối chiếu spec nếu match “lạ”. Đừng khai báo union trong project `net10.0`.
 
 ### 18.4 Đặc điểm nổi bật
 
@@ -933,7 +935,7 @@ Hierarchy OOP đóng (cùng exhaustiveness nhưng *kế thừa*): xem `closed` �
 | Không cần thừa kế chung | Các kiểu thành viên không cần có lớp cha hay interface chung. |
 | Tập đóng (closed set) | Không thể thêm case từ bên ngoài → tăng type safety. |
 | Nullable awareness | Nếu case types có nullable, compiler yêu cầu xử lý trường hợp `null`. |
-| Try-Both | Pattern thử wrapper rồi `Value` (Preview 7+). |
+| Try-Both | Pattern thử wrapper rồi `Value`. |
 
 ### 18.5 So sánh với các kỹ thuật trước đây
 
@@ -949,4 +951,4 @@ Trước C# 15, để mô hình hóa một "loại có thể là A hoặc B", ng
 | Thêm case ngoài assembly | ❌ | ❌ | ✅ |
 | Shared members | hạn chế | ✅ (base) | ✅ |
 
-Union types C# 15 (preview) giải quyết các hạn chế đó với sự hỗ trợ trực tiếp từ compiler — chỉ dùng trên toolchain preview, không phụ thuộc vào baseline .NET 10.
+Union types C# 15 giải quyết các hạn chế đó với sự hỗ trợ trực tiếp từ compiler. Dùng trên SDK 11 + `net11.0`; không có trên baseline .NET 10.

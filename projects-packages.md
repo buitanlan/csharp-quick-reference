@@ -4,7 +4,7 @@ Tham chiếu sâu về **project SDK-style**, NuGet, và CLI `dotnet` trên base
 Lớp *build/identity* của ứng dụng .NET (tương tự packages/modules bên Go) — không phải cú pháp ngôn ngữ thuần. Compiler C# nhận **source + references**; MSBuild/SDK quyết định TFM, `LangVersion`, restore, publish. Sai ở lớp này thì “code đúng vẫn không build / chạy sai runtime”.
 
 > **Baseline:** .NET **10** LTS (GA 11/2025 · hỗ trợ đến **14/11/2028**) · TFM `net10.0` · ngôn ngữ mặc định **C# 14**.  
-> C# **15** / .NET **11** = Preview (Preview 7 · 08/2026) — `<LangVersion>preview</LangVersion>` + SDK 11; không phải baseline repo. Surface preview **đổi trước GA** — đừng pin production vào union / `closed` / labeled `break`.
+> C# **15** / .NET **11 RC1** (08/09/2026, **go-live**; GA ~11/2026) — C# 15 là mặc định của `net11.0`, không cần `LangVersion=preview`. Không phải baseline LTS của repo. **Unsafe Evolution** vẫn preview (`LangVersion=preview` + `updated-memory-safety-rules`).
 
 ---
 
@@ -90,6 +90,7 @@ Bảng TFM hay gặp (app 2026):
 | TFM | Runtime | Ghi chú |
 |-----|---------|---------|
 | `net10.0` | .NET 10 LTS | **Baseline repo** |
+| `net11.0` | .NET 11 RC1 (go-live 09/2026) | C# 15 mặc định; GA ~11/2026 — chưa phải LTS của repo |
 | `net9.0` / `net8.0` | STS / LTS cũ | EOS ~11/2026 — đừng mở app mới |
 | `netstandard2.0` | Nhiều runtime | Thư viện legacy; API hẹp |
 | `net481` | .NET Framework | Windows; không phải Core |
@@ -101,13 +102,14 @@ Bảng TFM hay gặp (app 2026):
 
 ```xml
 <LangVersion>14.0</LangVersion>
-<!-- latest = bản GA cao nhất SDK hiểu; preview = C# 15 trên SDK 11 -->
+<!-- net10.0: mặc định 14. net11.0 (SDK 11 RC+): mặc định 15. preview = Unsafe Evolution, không phải C# 15. -->
 ```
 
-- SDK .NET 10 mặc định gắn **C# 14** với `net10.0` — **không cần** ghi `LangVersion` trừ khi hạ (compat) hoặc bật preview.
-- Hạ `LangVersion` ≠ hạ được API runtime: thiếu `TimeSpan.FromSeconds(double)` variant hay LINQ mới thì phải hạ **TFM** hoặc polyfill, không phải “đổi số ngôn ngữ”.
-- `latest` theo **SDK máy build**, không theo TFM — CI SDK 11 + `latest` có thể biên dịch C# 15 vào binary `net10.0` (một số feature cần runtime 11). Pin `14.0` trên nhánh production nếu team sợ “lọt preview”.
-- `preview` + TFM `net11.0` chỉ khi theo dõi **C# 15** (union, `closed`, labeled `break`, collection `with(…)` …) — **đổi trước GA**. Bảng feature: §14.
+- SDK .NET 10 mặc định gắn **C# 14** với `net10.0` — **không cần** ghi `LangVersion` trừ khi hạ (compat).
+- SDK .NET 11 (từ **RC1**) mặc định gắn **C# 15** với `net11.0`. Union, `closed`, extension indexer, collection `with(...)`, labeled `break`/`continue`, static non-virtual trên interface dùng được **không** cần `preview`.
+- Hạ `LangVersion` ≠ hạ được API runtime: thiếu API BCL mới thì phải hạ **TFM** hoặc polyfill, không phải “đổi số ngôn ngữ”.
+- `latest` theo **SDK máy build**, không theo TFM — CI SDK 11 + `latest` có thể biên dịch C# 15 vào binary `net10.0` (union/`closed` cần runtime 11). Pin `14.0` trên nhánh `net10.0`.
+- `preview` **không** còn là cổng vào C# 15. Từ RC1 nó (cùng feature flag) chỉ bật **Unsafe Evolution**. Bảng feature: §14.
 
 `global.json` pin **SDK** (compiler + targets), khác `LangVersion` (cờ compiler). Cả hai cần nhất quán trên CI.
 
@@ -121,9 +123,9 @@ Bảng TFM hay gặp (app 2026):
 }
 ```
 
-`allowPrerelease: true` trên máy dev dễ kéo SDK 11 preview → compile C# 15 **nhầm** nhánh GA. CI production: `false` + version 10.x. `rollForward: latestFeature` = 10.0.x mới; `latestMajor` có thể nhảy 11 khi GA — thường **không** muốn trên LTS pin.
+`allowPrerelease: true` trên máy dev dễ kéo SDK 11 RC → `latest` biên dịch C# 15 trên nhánh đang pin .NET 10. CI LTS: `false` + version 10.x. `rollForward: latestFeature` = 10.0.x mới; `latestMajor` có thể nhảy 11 khi GA — thường **không** muốn trên LTS pin.
 
-Giá trị `LangVersion` thường gặp: `14.0` (pin GA), `latest` (GA cao nhất **SDK hiểu**), `preview` (C# 15), `13.0`/`12.0` (hạ syntax, API TFM vẫn .NET 10). `ISO-2`/`ISO-1` cổ — đừng dùng.
+Giá trị `LangVersion` thường gặp: `14.0` (pin trên `net10.0`), `15.0` (pin trên `net11.0`), `latest` (bản cao nhất **SDK hiểu** — với SDK 11 đó là C# 15), `preview` (Unsafe Evolution, không phải “bật C# 15”), `13.0`/`12.0` (hạ syntax, API TFM vẫn theo project). `ISO-2`/`ISO-1` cổ — đừng dùng.
 
 ### 2.3 Property thường gặp
 
@@ -521,6 +523,8 @@ Dùng cho script/utility/prototype; app lớn / nhiều file / team → `dotnet 
 
 Cache restore file-based thường dưới thư mục user/temp SDK — xóa `bin`/`obj` cạnh file **không** luôn xóa cache ảo; `dotnet clean file.cs` / xóa thư mục generated khi “package không lên”.
 
+Từ **.NET 11 RC1**: `dotnet format` hiểu chương trình file-based, và publish Native AOT tái sử dụng artifact giữa các lần build. `net10.0` không có hai điểm này.
+
 ---
 
 ## 14. Best practices & checklist
@@ -531,25 +535,26 @@ Cache restore file-based thường dưới thư mục user/temp SDK — xóa `bi
 - Phân biệt `ProjectReference` (nội bộ) vs package (biên giới version).  
 - Publish: chọn FDD / self-contained / single-file / AOT **có chủ đích**; đọc warning AOT/trim trước khi ship. File-based apps **bật `PublishAot` mặc định**.  
 - Không nhét file-based app vào cây project nếu sợ “nhiễm” props — hoặc `#:property` tường minh.  
-- .NET 8/9 EOS ~ **10/11/2026** — production dài hạn nên đã ở **10**. Không đưa C# 15 unions / `closed` vào nhánh GA.
+- .NET 8/9 EOS ~ **10/11/2026** — production dài hạn nên đã ở **10**. C# 15 đi với `net11.0` (RC1 có go-live); đừng trộn syntax 15 vào nhánh pin `net10.0`.
 
 ### 14.1 Đọc bảng C# 14 / 15 như thế nào
 
 Bảng dưới **không** phải changelog đầy đủ và **không** thay topic file. Repo này tra cứu **theo chủ đề** (`oop.md`, `operators.md`, …): mỗi hàng là *cổng version* — feature nằm rải trong file tương ứng, kèm pitfall.
 
-- **C# 14 final** đi với baseline **.NET 10**. Dùng được trên `net10.0` + SDK 10, không cần `LangVersion=preview`. Extension members, `field`, `?.=`, `nameof` unbound, chuyển đổi Span, modifier trên lambda, partial ctor/event, compound assignment, `#:` (file-based) — GA.  
-- **C# 15 preview** cần SDK **11** + thường `net11.0` / `LangVersion=preview`. Union, `closed`, extension indexer, collection `with(…)`, labeled `break`/`continue`, một số memory safety — **đổi trước GA** (Preview 7 · 08/2026). Copy snippet preview vào app `net10.0` production → không compile hoặc cần preview compiler “lọt” binary không hỗ trợ runtime.  
-- Nâng **TFM** `net8.0` → `net10.0` mang API BCL + (mặc định) C# 14. Nâng **SDK** trên CI mà không pin `LangVersion` có thể kéo syntax mới hơn TFM — đó là lý do checklist ghi pin 14.0.  
+- **C# 14 final** đi với baseline **.NET 10**. Dùng được trên `net10.0` + SDK 10. Extension members, `field`, `?.=`, `nameof` unbound, chuyển đổi Span, modifier trên lambda, partial ctor/event, compound assignment, `#:` (file-based) — GA.  
+- **C# 15** (ổn định từ **RC1**, 08/09/2026) là mặc định của `net11.0`. Union, `closed`, extension indexer, collection `with(…)`, labeled `break`/`continue`, static non-virtual trên interface — **không** cần `LangVersion=preview`. Copy snippet đó vào app `net10.0` → không compile, hoặc compiler SDK 11 “lọt” binary runtime 10 không chạy.  
+- **Unsafe Evolution** tách khỏi C# 15: vẫn `preview` + `<Features>$(Features);updated-memory-safety-rules</Features>`. Có thể đổi tiếp (hướng C# 16 / .NET 12). Đừng bật trên nhánh ship.  
+- Nâng **TFM** `net8.0` → `net10.0` mang API BCL + (mặc định) C# 14. Nâng **SDK** trên CI mà không pin `LangVersion` có thể kéo syntax mới hơn TFM — đó là lý do checklist ghi pin 14.0 trên LTS.  
 - Breaking compiler .NET 10 (overload `Span`/`ReadOnlySpan`, analyzer mới) lộ khi **đổi TFM/SDK**, không chỉ khi “viết C# 14”. Đo build warning = 0 trước khi bật `TreatWarningsAsErrors` trên nhánh chính.
 
-C# 14 **final** có thể dùng ngay trên SDK 10; đừng ghi `preview` “cho chắc”. C# 15 **preview** không backport đầy đủ lên net10.0: union/`closed` cần toolchain 11. Extension **members** (C# 14) ≠ extension **indexer** (C# 15 preview) — nhầm bảng là compile fail.
+C# 14 **final** dùng ngay trên SDK 10. C# 15 **không** backport đầy đủ lên net10.0: union/`closed` cần toolchain và runtime 11. Extension **members** (C# 14) ≠ extension **indexer** (C# 15) — nhầm bảng là compile fail. `LangVersion=preview` trên SDK 11 **không** “bật thêm” union; union đã nằm trong 15.0.
 
 Nâng 8 → 10: đọc [breaking changes](https://learn.microsoft.com/dotnet/core/compatibility/10.0) (BCL + SDK + container images), không chỉ `LangVersion`. Analyzer `CA`/`IDE` mới có thể ồn — baseline `.editorconfig` trước khi `TreatWarningsAsErrors`.
 
 ```text
 Checklist nâng cấp → .NET 10 / C# 14
 [ ] TFM net10.0; CI image SDK 10; global.json pin
-[ ] LangVersion 14.0 trên production (tránh latest/preview)
+[ ] LangVersion 14.0 trên nhánh net10.0 (tránh latest khi CI đã có SDK 11)
 [ ] Nullable + ImplicitUsings
 [ ] Directory.Build.props + nuget.config rõ nguồn
 [ ] CPM nếu ≥ vài project; csproj không còn Version= khi CPM
@@ -557,7 +562,7 @@ Checklist nâng cấp → .NET 10 / C# 14
 [ ] Span: kiểm tra overload resolution nếu API thêm ROS/Span
 [ ] Script/CLI nhỏ: cân nhắc file-based apps; AOT publish mặc định
 [ ] Publish: FDD vs AOT vs single-file có chủ đích; test artifact AOT nếu bật
-[ ] Không đưa C# 15 preview vào production
+[ ] net11.0 chỉ khi chủ đích nâng TFM (RC1 go-live ≠ LTS); không bật updated-memory-safety-rules
 [ ] InternalsVisibleTo cho test (nếu cần)
 [ ] CI: restore → build → test → (publish)
 ```
@@ -565,6 +570,7 @@ Checklist nâng cấp → .NET 10 / C# 14
 | Nhóm ngôn ngữ | Trạng thái | Topic |
 |------|------------|-------|
 | Extension members, `field`, `?.=` , `nameof` unbound, Span conversions, lambda mods, partial ctor/event, compound assignment, `#:` | **C# 14 final** | `oop` / `operators` / `memory-spans` / `delegates-lambdas` / `preprocessor` / `main-function` |
-| Unions, `closed`, extension indexers, collection `with(…)`, labeled `break`/`continue`, memory safety… | **C# 15 preview** | `typesystem` / `oop` / `collections-generics` / `statements` / `memory-spans` |
+| Unions, `closed`, extension indexers, collection `with(…)`, labeled `break`/`continue`, static non-virtual trên interface | **C# 15** (mặc định `net11.0` từ RC1) | `typesystem` / `oop` / `collections-generics` / `statements` |
+| Unsafe Evolution (`safe`, requires-unsafe, `await` trong `unsafe`) | **Preview** — không thuộc C# 15 mặc định | `memory-spans` |
 
-Tài nguyên: [C# 14](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-14) · [.NET 10](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-10/overview) · [C# 15 preview](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [File-based apps](https://learn.microsoft.com/dotnet/core/sdk/file-based-apps) · [Native AOT](https://learn.microsoft.com/dotnet/core/deploying/native-aot/)
+Tài nguyên: [C# 14](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-14) · [.NET 10](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-10/overview) · [C# 15](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [.NET 11 RC1](https://github.com/dotnet/core/blob/main/release-notes/11.0/preview/rc1/csharp.md) · [File-based apps](https://learn.microsoft.com/dotnet/core/sdk/file-based-apps) · [Native AOT](https://learn.microsoft.com/dotnet/core/deploying/native-aot/)

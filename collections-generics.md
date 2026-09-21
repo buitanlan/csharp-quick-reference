@@ -1,6 +1,6 @@
 # Collections & Generics
 
-> **Baseline:** .NET **10** / C# **14**. Collection expression arguments (`with(...)`) là **PREVIEW (C# 15 / .NET 11)**.
+> **Baseline:** .NET **10** / C# **14**. Collection expression arguments (`with(...)`) là **C# 15** (mặc định trên `net11.0` từ RC1) — không có trên .NET 10.
 
 ---
 
@@ -24,7 +24,7 @@
     - [4.3 Bảng so sánh](#43-bảng-so-sánh)
   - [5. Readonly \& View: `ReadOnlyCollection<T>`, `IReadOnlyList<T>`…](#5-readonly--view-readonlycollectiont-ireadonlylistt)
   - [6. Mảng \& các tiện ích hiệu năng: `Array`, `ArrayPool<T>`, `Span<T>`, `Memory<T>`](#6-mảng--các-tiện-ích-hiệu-năng-array-arraypoolt-spant-memoryt)
-  - [7. Collection expressions (C# 12+) \& args (C# 15 preview)](#7-collection-expressions-c-12--args-c-15-preview)
+  - [7. Collection expressions (C# 12+) \& args (C# 15)](#7-collection-expressions-c-12--args-c-15)
   - [8. So sánh \& băm: `IEquatable<T>`, `IComparable<T>`, `IEqualityComparer<T>`…](#8-so-sánh--băm-iequatablet-icomparablet-iequalitycomparert)
   - [9. Hiệu năng \& best practices khi dùng collections](#9-hiệu-năng--best-practices-khi-dùng-collections)
   - [10. Generics nâng cao](#10-generics-nâng-cao)
@@ -358,7 +358,7 @@ finally
 
 ---
 
-## 7. Collection expressions (C# 12+) & args (C# 15 preview)
+## 7. Collection expressions (C# 12+) & args (C# 15)
 
 **C# 12** — cú pháp `[...]` tạo collection theo *target type* (thay `new List<int> { ... }` / `new[] { ... }` trong nhiều chỗ):
 
@@ -371,7 +371,7 @@ int[] merged = [..arr, 4, 5]; // spread
 
 - Compiler chọn constructor / `CollectionBuilder` / empty phù hợp với kiểu đích.  
 - Hỗ trợ spread `..` để nối sequence.  
-- Ưu tiên khi khởi tạo ngắn; vẫn dùng `new List<T>(capacity)` khi cần capacity tường minh (hoặc xem args preview bên dưới).
+- Ưu tiên khi khởi tạo ngắn; vẫn dùng `new List<T>(capacity)` khi cần capacity tường minh (hoặc `with(capacity:…)` ở C# 15).
 
 **Semantics:** `[...]` **không** có kiểu riêng — kiểu đến từ đích (`List<int> x = [1]` khác `int[] y = [1]`). `Span<int> s = [1,2,3]` có thể `stackalloc`/inline — **không** sống lâu hơn method. Spread `..xs` enumerates `xs` lúc tạo.
 
@@ -382,11 +382,11 @@ HashSet<int> set = [1, 1, 2];    // 2 phần tử — HashSet loại trùng
 
 **Pitfall:** `var x = [1, 2, 3]` — C# 12+ suy `int[]` trong nhiều ngữ cảnh; không đoán `List`. Overload `void F(List<int> a)` vs `void F(int[] a)` + `F([1,2])` → resolution có thể đổi giữa phiên bản — test kỹ. Collection expression vào `Span` rồi return ra ngoài = lỗi lifetime.
 
-**Vì sao / Khi nào dùng:** khởi tạo ngắn, test, merge `[..a, ..b]`. Hot-path biết capacity → `new List<T>(n)` hoặc preview `with(capacity:…)`.
+**Vì sao / Khi nào dùng:** khởi tạo ngắn, test, merge `[..a, ..b]`. Hot-path biết capacity → `new List<T>(n)` hoặc C# 15 `with(capacity:…)`.
 
-### Collection expression arguments — **PREVIEW (C# 15 / .NET 11)**
+### Collection expression arguments — **C# 15**
 
-> **Chưa GA.** Cần `<LangVersion>preview</LangVersion>` trên toolchain C# 15. Cú pháp có thể tinh chỉnh trước GA.
+> **C# 15 / .NET 11**, mặc định trên `net11.0` từ RC1. Không cần `LangVersion=preview`. Không compile trên C# 14.
 
 Truyền đối số constructor/factory qua phần tử `with(...)` **đứng đầu** collection expression:
 
@@ -406,7 +406,7 @@ HashSet<string> set = [with(StringComparer.OrdinalIgnoreCase), "Hello", "HELLO",
 - Arg không được `dynamic`.  
 - Với `[CollectionBuilder]`, args truyền vào factory **trước** `ReadOnlySpan<T>` phần tử.
 
-**Vì sao / Khi nào dùng (preview):** `List` cần capacity, `HashSet`/`Dictionary` cần comparer ngay lúc tạo — tránh `new HashSet(...) { ... }` dài. Production .NET 10: `new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Hello" }` hoặc `EnsureCapacity`.
+**Vì sao / Khi nào dùng:** `List` cần capacity, `HashSet`/`Dictionary` cần comparer ngay lúc tạo — tránh `new HashSet(...) { ... }` dài. Trên .NET 10: `new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Hello" }` hoặc `EnsureCapacity`.
 
 ---
 
@@ -560,7 +560,7 @@ _ = Average<decimal>([1.0m, 2.0m]);
 
 **Pitfall:** `T.CreateChecked` ném khi overflow; `CreateTruncating`/`CreateSaturating` khác semantics. Không giả định `INumber<T>` = “không NaN” (`double`). Mixing `INumber<T>` với `IEnumerable` box enumerator nếu không concrete.
 
-**So sánh:** trước .NET 7 phải `Add(int)`, `Add(double)`, … hoặc `dynamic` (chậm, không an toàn). Generic math = một thuật toán, nhiều kiểu.
+**So sánh:** trước .NET 7 phải `Add(int)`, `Add(double)`, … hoặc `dynamic` (chậm, không an toàn). Generic math = một thuật toán, nhiều kiểu. Static **non-virtual** trên interface (helper gọi `I.M()`, không dispatch theo `T`) là việc khác — C# 15 không còn đòi runtime DIM: [oop.md §3.3](oop.md#33-static-trên-interface-non-virtual-vs-static-abstract).
 
 **Vì sao / Khi nào dùng:** thư viện số, thống kê, shader-like. Business money → `decimal` tường minh thường rõ hơn generic.
 

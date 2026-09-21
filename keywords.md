@@ -1,6 +1,6 @@
 # Keywords
 
-> **Baseline:** .NET **10** / C# **14**. `extension` / `field`: C# 14. `union` / `closed`: **C# 15 preview**.  
+> **Baseline:** .NET **10** / C# **14**. `extension` / `field`: C# 14. `union` / `closed`: **C# 15** (mặc định `net11.0` từ RC1). `safe`: contextual của **Unsafe Evolution** (vẫn preview).  
 > Mục 1–80: reserved + vài contextual đã tách thành mục. Mục 81: bảng contextual còn lại — gồm **`record`**, **`async`/`await`**, **`yield`**, **`var`**, **`nameof`**.
 
 C# phân token thành vài lớp — **không** phải mọi chữ “keyword” trong docs đều cấm dùng làm tên biến:
@@ -24,7 +24,7 @@ Không nhầm ba lớp:
 
 Preprocessor **không** xuất hiện trong IL như keyword: `#if DEBUG` cắt source trước compile; `#:` (C# 14) chỉ file-based SDK đọc, không phải `if` runtime. Trộn `#if` với TLS/`Main` để “chọn entry” rất rối — dùng `StartupObject` / tách project.
 
-Gợi ý tra: reserved → mục 1–78 (+ `union` 79 preview). Contextual “lớn” đã tách: `extension`, `field`, `closed`. Còn lại (`record`, `async`, `await`, `yield`, `var`, `nameof`, LINQ, accessor) → **§81**. Pitfall/when nằm ở **Ghi chú**, không lặp lại cả topic `async.md`.
+Gợi ý tra: reserved → mục 1–78 (+ `union` 79, C# 15). Contextual “lớn” đã tách: `extension`, `field`, `closed`. Còn lại (`record`, `async`, `await`, `yield`, `var`, `nameof`, LINQ, accessor) → **§81**. Pitfall/when nằm ở **Ghi chú**, không lặp lại cả topic `async.md`.
 
 Trang này là **mục lục + pitfall ngắn**; semantics đầy đủ ở topic (`statements`, `oop`, `async`, `linq`, …) — không phải changelog C# 14/15. Đọc keyword mỏng → Ghi chú; contextual không có mục riêng → **§81**.
 
@@ -178,8 +178,8 @@ switch (statusCode)
 
 **Ghi chú:**  
 Quá nhiều `break`/`continue` trong cùng một vòng lặp có thể làm flow khó đọc.  
-**C# 15 preview:** `break outer;` / `continue outer;` trên vòng có nhãn — xem [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).  
-`break` trong `switch` không thoát vòng bao ngoài — đó là lý do labeled break preview. `break` không dùng trong `if`.
+**C# 15:** `break outer;` / `continue outer;` trên vòng có nhãn — xem [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15).  
+`break` trong `switch` không thoát vòng bao ngoài — đó là lý do labeled break (C# 15). `break` không dùng trong `if`.
 
 ---
 
@@ -321,7 +321,7 @@ public class Person
 
 **Ghi chú:**  
 Class là reference type → được cấp phát trên heap, truyền qua reference. Với type nhỏ, immutable, nhạy hiệu năng, cân nhắc `struct` hoặc `record struct`.  
-`class` vs `record class`: record thêm equality/`with`. `sealed` mặc định khi không cần inherit. C# 15 `closed` preview: [oop.md](oop.md). `static class` không instance.
+`class` vs `record class`: record thêm equality/`with`. `sealed` mặc định khi không cần inherit. C# 15 `closed`: [oop.md §2.6](oop.md#26-closed-hierarchies-c-15). `static class` không instance.
 
 ---
 
@@ -358,7 +358,7 @@ foreach (var item in items)
 }
 ```
 
-**Ghi chú:** **C# 15 preview** — `continue outer;` với nhãn vòng ngoài: [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15-preview).  
+**Ghi chú:** **C# 15** — `continue outer;` với nhãn vòng ngoài: [statements.md §8.1.1](statements.md#811-labeled-break--continue-c-15).  
 `continue` chỉ vòng **đang chạy**, không phải `switch`. Trong `foreach` nhảy tới phần tử kế. Lạm dụng `continue` + điều kiện phức = khó đọc hơn early-filter LINQ/`if` ngược.
 
 ---
@@ -593,7 +593,7 @@ public static class StringExtensions
 **Ghi chú:**  
 - Extension method cổ điển (`this T`) vẫn hợp lệ và tương thích nhị phân với extension members.  
 - Chi tiết thiết kế & `this`: [methods.md — `this` và extension method](methods.md#12-this-và-extension-method); property/`field` liên quan OOP: [oop.md](oop.md).  
-- Indexer extension: **C# 15 preview**, không phải C# 14 `extension` block method. Không dùng `extension` làm tên type trừ khi contextual slot cho phép.
+- Indexer extension: **C# 15**, không phải C# 14 `extension` block method. Không dùng `extension` làm tên type trừ khi contextual slot cho phép.
 
 ---
 
@@ -794,7 +794,7 @@ switch (option)
 
 **Ghi chú:**  
 Thường được xem là “code smell”, trừ vài pattern rất hiếm (ví dụ thoát lồng nhiều vòng).  
-**C# 15 preview** có `break outer` — ưu tiên hơn `goto` cho vòng lồng. `goto case` trong `switch` vẫn hợp lệ. Không `goto` xuyên `finally` theo cách bỏ cleanup.
+**C# 15** có `break outer` — ưu tiên hơn `goto` cho vòng lồng. `goto case` trong `switch` vẫn hợp lệ. Không `goto` xuyên `finally` theo cách bỏ cleanup.
 
 ---
 
@@ -892,7 +892,7 @@ public interface ILogger
 ```
 
 **Ghi chú:**  
-Không có field instance (trừ default interface members C# 8+ — cẩn thận DIAM). Class implement mọi member hoặc `abstract`. `interface` cho hợp đồng; `abstract class` khi có state/behavior chung. Generic variance: `in`/`out` trên `T`.
+Không có field instance (trừ default interface members C# 8+ — cẩn thận DIAM). Class implement mọi member hoặc `abstract`. `interface` cho hợp đồng; `abstract class` khi có state/behavior chung. Generic variance: `in`/`out` trên `T`. C# 11: `static abstract`/`static virtual`. C# 15: static non-virtual không còn đòi runtime DIM — [oop.md §3.3](oop.md#33-static-trên-interface-non-virtual-vs-static-abstract).
 
 ---
 
@@ -1260,6 +1260,7 @@ sealed class FinalType : BaseType {}
 
 - Bạn cũng có thể dùng từ khóa `sealed` cho một phương thức (method) hoặc thuộc tính (property) đang override một phương thức/thuộc tính `virtual` trong lớp cơ sở (base class). Điều này cho phép bạn vẫn cho phép các lớp khác kế thừa từ lớp của bạn, nhưng ngăn chúng override một số phương thức/thuộc tính `virtual` cụ thể.
 - Bạn không thể áp dụng `sealed` chung với `abstract` khi khai báo lớp, vì bạn buộc phải cho phép thừa kế từ lớp `abstract` mới có thể dùng được.
+- Trên interface, `sealed` cũng đánh dấu member **non-virtual** (instance có body, hoặc `static sealed`). Static không `abstract`/`virtual` vốn đã non-virtual; C# 15 cho gọi static đó dù runtime không có DIM — [oop.md §3.3](oop.md#33-static-trên-interface-non-virtual-vs-static-abstract).
 
 ---
 
@@ -1318,7 +1319,7 @@ public static class MathHelper
 ```
 
 **Ghi chú:**  
-`static class` không instance, không kế thừa. Local function/lambda `static` (C# 8/9) cấm capture. `using static`. C# 11: `static abstract` trên interface (generic math). `Main` phải `static`.
+`static class` không instance, không kế thừa. Local function/lambda `static` (C# 8/9) cấm capture. `using static`. C# 11: `static abstract` trên interface (generic math). C# 15: static non-virtual trên interface không cần runtime DIM — [oop.md §3.3](oop.md#33-static-trên-interface-non-virtual-vs-static-abstract). `Main` phải `static`.
 
 ---
 
@@ -1374,7 +1375,7 @@ switch (day)
 ```
 
 **Ghi chú:**  
-Statement: mỗi `case` phải `break`/`return`/`goto` (fall-through C bị cấm, trừ empty case xếp chồng). Expression `day switch { … }` (C# 8): exhaustive hơn. Pattern: [statements.md](statements.md). **C# 15 preview:** labeled `break` vòng — không phải `switch`.
+Statement: mỗi `case` phải `break`/`return`/`goto` (fall-through C bị cấm, trừ empty case xếp chồng). Expression `day switch { … }` (C# 8): exhaustive hơn. Pattern: [statements.md](statements.md). **C# 15:** labeled `break` vòng — không phải `switch`.
 
 ---
 
@@ -1625,14 +1626,14 @@ while (i < 10)
 ```
 
 **Ghi chú:**  
-Điều kiện kiểm tra **trước** body (khác `do`). `while (true)` cần `break`/`return`/cancel. Collection: `foreach` rõ hơn index. **C# 15 preview:** `break outer` trên vòng có nhãn.
+Điều kiện kiểm tra **trước** body (khác `do`). `while (true)` cần `break`/`return`/cancel. Collection: `foreach` rõ hơn index. **C# 15:** `break outer` trên vòng có nhãn.
 
 ---
 
 ## 79. `union`
 
-- **Loại:** reserved · **C#:** 15.0 — **PREVIEW (.NET 11 / C# 15)**  
-- **Mục đích:** Khai báo một **union type** — kiểu có thể chứa đúng một trong số các kiểu thành viên đã xác định (tập đóng). Xem chi tiết tại [Union types (C# 15) — PREVIEW](typesystem.md#18-union-types-c-15-preview).
+- **Loại:** reserved · **C#:** 15.0 — mặc định trên `net11.0` từ RC1  
+- **Mục đích:** Khai báo một **union type** — kiểu có thể chứa đúng một trong số các kiểu thành viên đã xác định (tập đóng). Xem chi tiết tại [Union types (C# 15)](typesystem.md#18-union-types-c-15).
 
 **Ví dụ:**
 
@@ -1654,17 +1655,17 @@ string name = pet switch
 ```
 
 **Ghi chú:**  
-- **Không thuộc baseline .NET 10 / C# 14** — cần preview toolchain.  
+- **Không thuộc baseline .NET 10 / C# 14.** Trên `net11.0` (SDK 11 RC1+) không cần `<LangVersion>preview</LangVersion>`.  
 - Các kiểu thành viên được chuyển đổi ngầm định sang union type.  
 - Compiler bắt buộc xử lý đầy đủ tất cả các case trong `switch` (exhaustiveness).  
-- Yêu cầu .NET 11 Preview + `<LangVersion>preview</LangVersion>`.
+- JSON: STJ ghi case đang active, không `$type` — [typesystem.md §18](typesystem.md#18-union-types-c-15).
 
 ---
 
 ## 80. `closed`
 
-- **Loại:** contextual · **C#:** 15.0 — **PREVIEW (.NET 11 / C# 15)**  
-- **Mục đích:** Đánh dấu class/record hierarchy **đóng** trong assembly — mọi derived type phải cùng assembly; `switch` exhaustive. Xem [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
+- **Loại:** contextual · **C#:** 15.0 — mặc định trên `net11.0` từ RC1  
+- **Mục đích:** Đánh dấu class/record hierarchy **đóng** trong assembly — mọi derived type phải cùng assembly; `switch` exhaustive. Xem [oop.md §2.6](oop.md#26-closed-hierarchies-c-15).
 
 **Ví dụ:**
 
@@ -1675,7 +1676,7 @@ public record class Open(float Percent) : GateState;
 ```
 
 **Ghi chú:** Khác `union` (ghép kiểu không cần thừa kế). Không thuộc baseline C# 14.  
-Mọi derived phải **cùng assembly**; library public `closed` hạn chế consumer extend — đúng ý exhaustiveness, sai ý plugin. Preview: [oop.md §2.6](oop.md#26-closed-hierarchies-c-15-preview).
+Mọi derived phải **cùng assembly**; library public `closed` hạn chế consumer extend — đúng ý exhaustiveness, sai ý plugin. Chi tiết: [oop.md §2.6](oop.md#26-closed-hierarchies-c-15).
 
 ---
 
@@ -1690,7 +1691,7 @@ Các token dưới **không** luôn reserved; chỉ là keyword trong ngữ cả
 | `file` | access modifier cùng file (C# 11) | `file class HiddenHelper { }` | [oop.md](oop.md) §1.3 |
 | `scoped` | lifetime `ref`/`ref struct` (C# 11) | `void F(scoped ref Span<int> s)` | [statements.md](statements.md) §4.6 · [memory-spans.md](memory-spans.md) |
 | `when` | filter `catch` / pattern | `catch (IOException ex) when (ex.HResult == 5)` | [exceptions.md](exceptions.md) · [statements.md](statements.md) |
-| `with` | copy record; `with(...)` collection **C# 15 preview** | `var p2 = p with { Name = "B" };` | [typesystem.md](typesystem.md) · [collections-generics.md](collections-generics.md) |
+| `with` | copy record; `with(...)` collection **C# 15** | `var p2 = p with { Name = "B" };` | [typesystem.md](typesystem.md) · [collections-generics.md](collections-generics.md) |
 | `and` / `or` / `not` | pattern combinator (C# 9) | `x is > 0 and < 10` | [operators.md](operators.md) · [statements.md](statements.md) |
 | `async` | đánh dấu method/lambda bất đồng bộ | `async Task RunAsync() { … }` | [async.md](async.md) |
 | `await` | chờ awaitable; TLS/async Main được | `var n = await http.GetStringAsync(url);` | [async.md](async.md) · [main-function.md](main-function.md) |
@@ -1710,13 +1711,14 @@ Các token dưới **không** luôn reserved; chỉ là keyword trong ngữ cả
 | `let` / `join` / `group` / `into` | LINQ query | `group o by o.Id into g` | [linq.md](linq.md) |
 | `orderby` / `ascending` / `descending` | LINQ sort | `orderby x.Name descending` | [linq.md](linq.md) |
 | `on` / `equals` / `by` | LINQ `join` / `group` | `join o in orders on c.Id equals o.CustomerId` | [linq.md](linq.md) |
+| `safe` | Unsafe Evolution: member **không** requires-unsafe (vẫn preview) | `static safe partial int GetValue();` | [memory-spans.md](memory-spans.md) §9.1 |
 | `alias` / `notnull` | `using` alias; constraint `notnull` | `where T : notnull` | [typesystem.md](typesystem.md) |
 
-`extension` / `field` đã có mục 23–26 (C# 14). `closed` mục 80 (C# 15 preview). Preprocessor (`#if`, `#:`) **không** nằm bảng này — [preprocessor-directives.md](preprocessor-directives.md).
+`extension` / `field` đã có mục 23–26 (C# 14). `closed` mục 80 (C# 15). `safe` trong bảng trên là preview Unsafe Evolution, không phải C# 15 mặc định. Preprocessor (`#if`, `#:`) **không** nằm bảng này — [preprocessor-directives.md](preprocessor-directives.md).
 
 ### 81.1 Năm contextual hay tra (`record` / `async` / `await` / `yield` / `var` / `nameof`)
 
-- **`record`**: positional `record Person(string Name)` sinh ctor, `Deconstruct`, equality theo giá trị, `with`. `record class` reference; `record struct` value. Không phải reserved — `int record = 1` hợp lệ (đừng). Chi tiết [oop.md](oop.md) / [typesystem.md](typesystem.md) §8. C# 15 `closed record` preview.
+- **`record`**: positional `record Person(string Name)` sinh ctor, `Deconstruct`, equality theo giá trị, `with`. `record class` reference; `record struct` value. Không phải reserved — `int record = 1` hợp lệ (đừng). Chi tiết [oop.md](oop.md) / [typesystem.md](typesystem.md) §8. C# 15: `closed record`.
 - **`async`**: modifier method/lambda/local function trả `Task`/`Task<T>`/`IAsyncEnumerable<T>`/`ValueTask`. **Không** biến `Main` thành CLR async — compiler sinh wrapper (§ `main-function`). `async void` chỉ event. [async.md](async.md).
 - **`await`**: chỉ trong `async` (hoặc TLS/`await foreach`). Unwrap `Task` exception. TLS: có `await` ⇒ entry `async Task`. Không `await` trong `lock`. [async.md](async.md) · [main-function.md](main-function.md) §7.
 - **`yield`**: `yield return` / `yield break` — iterator, deferred, không phải `return` giá trị method. Không `yield` trong `try` có `catch` (được `try`/`finally`). [methods.md](methods.md) §13 · [linq.md](linq.md) custom operators.

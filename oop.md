@@ -2,7 +2,7 @@
 
 *(Class, OOP, Properties/Indexers, Events)*
 
-> **Baseline:** .NET **10** / C# **14** — `field`, partial ctor/event, extension members. **C# 15 preview:** `closed` hierarchy, extension indexer.
+> **Baseline:** .NET **10** / C# **14** — `field`, partial ctor/event, extension members. **C# 15** (`net11.0`, mặc định từ RC1): `closed`, extension indexer, static non-virtual trên interface.
 
 ---
 
@@ -26,10 +26,11 @@
     - [2.3 `base` \& constructor chaining](#23-base--constructor-chaining)
     - [2.4 Abstract class vs interface](#24-abstract-class-vs-interface)
     - [2.5 Kiểm tra/cast kiểu (`is`/`as`/pattern matching)](#25-kiểm-tracast-kiểu-isaspattern-matching)
-    - [2.6 Closed hierarchies (C# 15 preview)](#26-closed-hierarchies-c-15-preview)
+    - [2.6 Closed hierarchies (C# 15)](#26-closed-hierarchies-c-15)
   - [3. Interface](#3-interface)
     - [3.1 Khai báo/triển khai](#31-khai-báotriển-khai)
     - [3.2 Default interface methods (C# 8)](#32-default-interface-methods-c-8)
+    - [3.3 Static trên interface: non-virtual vs `static abstract`](#33-static-trên-interface-non-virtual-vs-static-abstract)
   - [4. Equality \& `ToString`](#4-equality--tostring)
     - [4.1 So sánh theo tham chiếu vs theo giá trị](#41-so-sánh-theo-tham-chiếu-vs-theo-giá-trị)
     - [4.2 `Equals`/`GetHashCode`/`IEquatable<T>`](#42-equalsgethashcodeiequatablet)
@@ -46,7 +47,7 @@
     - [6.1 Cú pháp \& ví dụ](#61-cú-pháp--ví-dụ)
     - [6.2 Nhiều tham số, quyền truy cập khác nhau](#62-nhiều-tham-số-quyền-truy-cập-khác-nhau)
     - [6.3 Mẫu dùng thường gặp](#63-mẫu-dùng-thường-gặp)
-    - [6.4 Extension indexers (C# 15 preview)](#64-extension-indexers-c-15-preview)
+    - [6.4 Extension indexers (C# 15)](#64-extension-indexers-c-15)
   - [7. Events](#7-events)
     - [7.1 Ôn nhanh delegate](#71-ôn-nhanh-delegate)
     - [7.2 `event` là gì?](#72-event-là-gì)
@@ -476,7 +477,7 @@ public class Dog : Animal
 | Field / ctor | ✅ | ❌ field instance (C# 8+ có static) |
 | Đa kế thừa | 1 class | nhiều interface |
 | Versioning | thêm method cụ thể dễ | thêm method phá implement — trừ DIM |
-| Exhaustiveness | `closed` (C# 15 preview) | không |
+| Exhaustiveness | `closed` (C# 15) | không |
 
 **Vì sao / Khi nào abstract:** khung “is-a” + code dùng chung (`Stream`). Interface: capability (`IDisposable`, `IComparable<T>`). Cả hai: `abstract class` + interface tách hợp đồng.
 
@@ -498,9 +499,9 @@ switch (s)
 
 - **Pattern matching** (C# hiện đại) giúp code ngắn gọn, an toàn null/type.
 
-### 2.6 Closed hierarchies (C# 15 preview)
+### 2.6 Closed hierarchies (C# 15)
 
-> **PREVIEW (.NET 11 / C# 15).** Cần SDK 11 + `<LangVersion>preview</LangVersion>`. Không thuộc baseline .NET 10.
+> **C# 15 / .NET 11**, mặc định trên `net11.0` từ RC1. Không cần `LangVersion=preview`. Không thuộc baseline .NET 10.
 
 `closed` trên class/record: tập kiểu derived **cố định trong assembly** — compiler biết mọi subtype → `switch` exhaustive **không** cần `_`.
 
@@ -522,7 +523,7 @@ string Label(GateState s) => s switch
 - Dùng khi mô hình trạng thái/ADT vẫn muốn kế thừa + shared members.  
 - Union vs closed: không chung base → `union`; có cây kế thừa + exhaustiveness → `closed`.
 
-**Semantics:** `closed` *đóng* tập subtype **trong assembly khai báo**. Compiler dùng danh sách đó cho exhaustiveness — giống union nhưng vẫn là OOP (virtual, field, `base`). Generic `T where T : GateState` trên closed type: một số preview cho phép switch exhaustive theo ràng buộc (Preview 7+ — xác nhận SDK).
+**Semantics:** `closed` *đóng* tập subtype **trong assembly khai báo**. Compiler dùng danh sách đó cho exhaustiveness — giống union nhưng vẫn là OOP (virtual, field, `base`). `T where T : GateState` cũng exhaustive khi `GateState` là `closed`: `T` không thêm case ngoài danh sách đã biết (từ Preview 7, giữ trong C# 15). Metadata: `IsClosedTypeAttribute.DerivedTypes`.
 
 ```csharp
 public closed abstract class Result;
@@ -549,7 +550,14 @@ string Show(Result r) => r switch
 | Exhaustive `switch` | ✅ | ✅ | ❌ (`_`) |
 | Plugin thêm case ngoài assembly | ❌ | ❌ | ✅ |
 
-**Pitfall preview:** thư viện `closed` **cấm** consumer derive — đó là điểm của feature, không phải bug. Đừng `closed` nếu bạn muốn SDK mở rộng state. JSON deserializer tạo subtype lạ → fail model.
+**Pitfall:** thư viện `closed` **cấm** consumer derive — đó là điểm của feature, không phải bug. Đừng `closed` nếu bạn muốn SDK mở rộng state. `closed` **không** tự thêm discriminator JSON. Serialize kiểu concrete thì STJ ghi đúng kiểu đó, không `$type`. API nhận **base** `closed` cần opt-in:
+
+```csharp
+[JsonPolymorphic(InferClosedTypePolymorphism = true)]
+public closed record class PaymentEvent(string PaymentId);
+```
+
+STJ suy ra derived trong assembly và ghi `$type`. Cùng ý có thể đặt trên `JsonSerializerOptions.InferClosedTypePolymorphism`. Subtype lạ (plugin, payload cũ) không nằm trong tập đóng → deserialize fail. Union (không discriminator) vs `closed` + `$type`: xem [typesystem.md §18](typesystem.md#18-union-types-c-15).
 
 **Vì sao / Khi nào dùng:** state machine, AST, Result/Error **cùng assembly**. Plugin architecture → interface mở, không `closed`.
 
@@ -598,6 +606,29 @@ log.Info("hi");                 // default
 **Pitfall:** diamond DIM hai interface cùng member → class phải implement tường minh. DIM trên generic + struct: gọi qua interface **box**.
 
 **Vì sao / Khi nào DIM:** thêm method vào interface thư viện đã ship. Logic mới của domain → abstract class / extension, không nhồi interface.
+
+### 3.3 Static trên interface: non-virtual vs `static abstract`
+
+C# 8 cho phép member `static` trên interface. Trước C# 15, compiler buộc runtime có **default interface implementations** (`RuntimeFeature.DefaultImplementationsOfInterfaces`) mới khai báo và gọi được các static đó. **C# 15** (mặc định `net11.0` từ RC1) gỡ ràng buộc cho static **non-virtual**: `I.Helper()` là lời gọi static trực tiếp, không cần DIM.
+
+`static abstract` / `static virtual` (C# 11, generic math) **vẫn** cần `RuntimeFeature.VirtualStaticsInInterfaces`. Chúng resolve lúc compile theo `T`, không phải vtable instance. `static sealed` ghi tường minh “non-virtual” — static interface vốn đã non-virtual nếu không có `abstract`/`virtual`.
+
+```csharp
+public interface ILog
+{
+    static void Write(string message) => Console.WriteLine(message);
+
+    static sealed int BufferSize => 256;
+
+    static abstract string Name { get; }
+}
+
+ILog.Write("hi"); // non-virtual — không cần instance, không cần DIM từ C# 15
+```
+
+**Pitfall:** đừng nhầm helper `static` với DIM instance (`void Info() => ...` chỉ gọi được qua biến kiểu interface). Static non-virtual **không** override được. Multi-target runtime không có static virtual: giữ `static abstract` sau `#if` / TFM mới; helper thuần có thể là static non-virtual trên C# 15.
+
+**Vì sao / Khi nào:** hằng và hàm gắn contract mà mọi caller gọi `I.M()`, không dispatch. Thuật toán số theo `T` → `static abstract` ([collections-generics.md §10.3](collections-generics.md#103-generic-math--static-abstract-members)).
 
 ---
 
@@ -879,9 +910,9 @@ public class Settings
 - Truy cập bộ sưu tập tuỳ biến (`SparseArray`, `Grid`, `RangeMap`…).  
 - Cung cấp API “giống mảng” cho cấu trúc dữ liệu.
 
-### 6.4 Extension indexers (C# 15 preview)
+### 6.4 Extension indexers (C# 15)
 
-> **PREVIEW.** C# 14 đã có extension **method/property/operator**; C# 15 thêm **indexer** trong `extension` block.
+> **C# 15.** C# 14 đã có extension **method/property/operator**; C# 15 thêm **indexer** trong `extension` block. Mặc định trên `net11.0` từ RC1 — không cần `LangVersion=preview`. Không có trên .NET 10.
 
 ```csharp
 public static class SpanExtensions
@@ -1032,7 +1063,7 @@ clock.Tick += (_, _) => { };            // ❌ không -= được cùng instance
 C# 14 giới thiệu khối **`extension`** trong `static class` (top-level, không generic) để khai báo *extension members*: method, property, operator — theo kiểu **instance** hoặc **static** của receiver. Classic extension method (`this T` trên tham số đầu) vẫn hoạt động và **tương thích IL** với dạng mới.
 
 > Góc nhìn method/API: xem thêm [methods.md — §12](./methods.md#12-this-và-extension-method).  
-> **C# 15 Preview:** extension **indexer** — [§6.4](#64-extension-indexers-c-15-preview).
+> **C# 15:** extension **indexer** — [§6.4](#64-extension-indexers-c-15).
 
 ### 8.1 `extension` block — cú pháp
 
@@ -1159,7 +1190,7 @@ public static class GenericExtensions
 
 **Pitfall:** hai `extension` block tạo cùng signature → lỗi. Extension **không** thấy `private` của receiver. Operator extension dễ gây overload khó đọc (`+` trên `IEnumerable`). Classic `this` và block mới **cùng IL** — migrate không breaking, nhưng IntelliSense có thể hiện cả hai nếu bạn để song song cùng tên trong hai class/`using`.
 
-**Vì sao / Khi nào dùng `extension` block:** property (`IsEmpty`), static factory trên type ngoài (`IEnumerable<T>.Empty`), operator có kiểm soát. Method một dòng trên codebase cũ → giữ `this T`. Indexer: **C# 15 preview** (§6.4).
+**Vì sao / Khi nào dùng `extension` block:** property (`IsEmpty`), static factory trên type ngoài (`IEnumerable<T>.Empty`), operator có kiểm soát. Method một dòng trên codebase cũ → giữ `this T`. Indexer: **C# 15** (§6.4).
 
 ---
 

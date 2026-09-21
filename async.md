@@ -111,7 +111,14 @@ public async Task<string> DownloadAsync(string url)
 - Tại mỗi `await`:
   - Nếu tác vụ đã xong → chạy tiếp như bình thường.
   - Nếu chưa xong → method **tạm thoát ra**, trả về một `Task` cho caller, và khi tác vụ xong, nó sẽ quay lại chạy từ sau `await`.
-- Một hàm async không có bất kỳ lời gọi `await` nào bên trong sẽ thực thi đồng bộ, nhưng vẫn trả về `Task` và có thể gây cảnh báo của compiler. Để chạy code thực sự bất đồng bộ trên thread khác, hãy tham khảo [threading.md](threading.md).
+- Một hàm async không có `await` vẫn chạy **hết trên thread gọi**, rồi trả `Task` đã hoàn thành. Compiler cảnh báo **CS1998**. `async` không đưa việc sang thread khác — muốn vậy thì `Task.Run`: [threading.md §3.2](threading.md#32-taskrun--quan-hệ-với-pool).
+
+```csharp
+public async Task<int> NoAwaitAsync() // CS1998
+{
+    return 1; // chạy đồng bộ; Task đã RanToCompletion trước khi caller nhận
+}
+```
 
 ---
 
@@ -260,16 +267,35 @@ if (vt.IsCompletedSuccessfully)
 return await vt;
 ```
 
-Đừng `vt.Result` khi `!IsCompleted` — block / throw. `Preserve()` (.NET 5+) tạo bản có thể inspect nhiều lần **trước** await — chi phí ≈ `AsTask` trong nhiều trường hợp; không dùng mặc định.
+Đừng `vt.Result` khi `!IsCompleted` — block hoặc ném. `Preserve()` (.NET 5+) tách kết quả khỏi `IValueTaskSource` (sync thì giữ `T`, chưa xong thì bọc `Task`) để được inspect / `await` nhiều lần. Bản gốc sau `Preserve` không được dùng — source có thể đã recycle.
+
+```csharp
+ValueTask<int> raw = reader.ReadAsync(ct);
+ValueTask<int> stable = raw.Preserve(); // chỉ dùng stable từ đây
+
+int n = stable.IsCompletedSuccessfully
+    ? stable.Result
+    : await stable;
+// await stable lần nữa được; await raw thì không
+```
 
 ### 3.3 `async void` – trường hợp đặc biệt
 
 ```csharp
 public async void OnButtonClick(object sender, EventArgs e)
 {
-    await DoWorkAsync();
+    try
+    {
+        await DoWorkAsync();
+    }
+    catch (Exception ex)
+    {
+        Log(ex); // không có Task để caller await/catch — chỉ bắt được ở đây
+    }
 }
 ```
+
+Bỏ `try`: exception thoát khỏi `async void` vào `SynchronizationContext` (UI có thể crash), không vào `TaskScheduler.UnobservedTaskException`.
 
 **Chỉ nên dùng cho event handler**, vì:
 
@@ -476,7 +502,24 @@ async Task BadAsync()
 }
 ```
 
-`lock` không được chứa `await` vì SM resume **thread khác** — `Monitor` gắn thread. Dùng `SemaphoreSlim.WaitAsync`.
+`lock` không được chứa `await` (compiler cấm) vì SM resume **thread khác** — `Monitor` gắn thread. Giới hạn đồng thời qua lần chờ: `SemaphoreSlim`.
+
+```csharp
+private readonly SemaphoreSlim _gate = new(1, 1);
+
+async Task UpdateAsync(CancellationToken ct)
+{
+    await _gate.WaitAsync(ct);
+    try
+    {
+        await SaveAsync(ct); // được await — không giữ lock OS
+    }
+    finally
+    {
+        _gate.Release();
+    }
+}
+```
 
 ---
 
@@ -507,7 +550,24 @@ var data = await client.GetStringAsync(url).ConfigureAwait(false);
 
 **Semantics `ConfigureAwait(false)`:** continuation chạy trên thread pool (hoặc thread hoàn thành I/O), **không** marshal về UI/ASP.NET classic. `ConfigureAwait(true)` = mặc định.
 
-**`ConfigureAwait(ConfigureAwaitOptions)` (.NET 8+):** `ForceYielding`, `SuppressThrowing`, `ContinueOnCapturedContext` — nâng cao; app thường chỉ cần `false`.
+**`ConfigureAwait(ConfigureAwaitOptions)` (.NET 8+)** trên `Task` / `ValueTask`. App thường vẫn chỉ cần `false`. Ba cờ hay gặp (kết hợp bằng `|`):
+
+| Cờ | Việc |
+|---|---|
+| `ContinueOnCapturedContext` | Giống `ConfigureAwait(true)` — cố về SyncContext |
+| `ForceYielding` | Dù awaitable **đã xong**, continuation vẫn chạy sau, không inline trên thread hiện tại |
+| `SuppressThrowing` | `await` **không ném**. Chỉ hợp lệ trên `Task` không generic. Fault/cancel đọc ở `IsFaulted` / `IsCanceled` |
+
+```csharp
+await Task.Delay(1).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+
+Task op = DoWorkAsync();
+await op.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+if (op.IsFaulted)
+    Log(op.Exception!.InnerException);
+```
+
+`SuppressThrowing` trên `Task<T>` không hợp lệ — không có giá trị để trả khi lỗi. `ForceYielding` tránh continuation ăn stack của thread vừa hoàn thành I/O; đừng bật mọi `await`.
 
 ### Library vs app (.NET Core / .NET 5+)
 
@@ -570,6 +630,20 @@ public async Task DoAsync()
 - Nếu `SomeAsyncOperation()` trả về `Task` faulted:
   - `await` sẽ ném ra **exception gốc** (không bọc `AggregateException` – trừ khi bạn gọi `.Result`/`.Wait()`).
 - Nhiều exception trên một Task (hiếm, `WhenAll`): `await` ném **một** (thường đầu tiên); còn lại trong `task.Exception`.
+
+```csharp
+Task<int> all = Task.WhenAll(FailAsync("a"), FailAsync("b"));
+try
+{
+    await all; // ném một exception, thường "a"
+}
+catch (Exception first)
+{
+    AggregateException agg = all.Exception!; // InnerExceptions có cả "a" và "b"
+    _ = first;
+    _ = agg.InnerExceptions;
+}
+```
 
 Chi tiết unwrap vs `AggregateException`: [exceptions.md §9](exceptions.md#9-ngoại-lệ-trong-asyncawait--song-song).
 
@@ -936,7 +1010,19 @@ await foreach (var x in source.Where(static i => i > 0).Take(10))
     Console.WriteLine(x);
 ```
 
-**Không** `GetAsyncEnumerator` rồi quên `DisposeAsync` — `await foreach` / `await using` bắt buộc. Hai enumerator trên cùng iterator method = **hai** lần chạy thân (side-effect nhân đôi).
+**Không** `GetAsyncEnumerator` rồi quên `DisposeAsync` — `await foreach` / `await using` bắt buộc. Gọi lại cùng method iterator là **lần chạy mới**, không phải phát lại bộ nhớ đệm:
+
+```csharp
+async IAsyncEnumerable<int> OnceAsync()
+{
+    Console.WriteLine("run");
+    yield return 1;
+}
+
+IAsyncEnumerable<int> seq = OnceAsync();
+await foreach (var _ in seq) { } // in "run"
+await foreach (var _ in seq) { } // in "run" lần nữa
+```
 
 ---
 
@@ -988,6 +1074,19 @@ Nhiều consumer: cùng `Reader` cạnh tranh `ReadAsync` (cạnh tranh công b�
 
 Telemetry/log: `DropOldest` có thể chấp nhận. Thanh toán/lệnh: **Wait**, không drop.
 
+```csharp
+var log = Channel.CreateBounded<int>(new BoundedChannelOptions(1)
+{
+    FullMode = BoundedChannelFullMode.DropOldest,
+    SingleReader = true,
+    SingleWriter = true
+});
+
+log.Writer.TryWrite(1);
+log.Writer.TryWrite(2); // kênh đầy: bỏ 1, giữ 2. TryWrite trả true
+// Wait (mặc định) thì WriteAsync thứ hai sẽ await, không bỏ 1
+```
+
 **Lỗi qua channel:**
 
 ```csharp
@@ -1023,9 +1122,11 @@ await Task.Delay(TimeSpan.FromSeconds(1), ct);
 var work = DoWorkAsync(ct);
 var completed = await Task.WhenAny(work, Task.Delay(timeout, ct));
 if (completed != work)
-    throw new TimeoutException();
+    throw new TimeoutException(); // work VẪN chạy — WhenAny không hủy
 await work;
 ```
+
+`WhenAny` chỉ cho biết tác vụ nào xong trước. Hết giờ mà không `Cancel` token của `work` thì việc nền tiếp tục. Cách dừng việc: `CancelAfter` ở cuối mục này.
 
 Tránh `Thread.Sleep` trong async method. Mỗi `Delay` tạo `Task` + timer — vòng `while + Delay` **mỗi vòng một Task**.
 

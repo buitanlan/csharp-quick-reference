@@ -461,7 +461,7 @@ Shebang phải **dòng đầu**. `#:` ngay sau shebang.
 | `#:package` | NuGet — `Name@Version` hoặc `@*` (floating — cẩn thận lock) |
 | `#:property` | MSBuild property (`PublishAot`, `Nullable`, `LangVersion`, …) |
 | `#:project` | Project reference |
-| `#:include` | Thêm file khác vào compile (SDK mới hơn / .NET 11 preview+; kiểm tra SDK của bạn) |
+| `#:include` | Thêm file khác vào compile (SDK 11 / .NET 11; kiểm tra SDK của bạn) |
 
 ```bash
 dotnet build file.cs
@@ -482,7 +482,7 @@ Cùng quy tắc ngôn ngữ: TLS **hoặc** `Main` cổ điển trong **một** 
 
 Shebang + `dotnet run file.cs` trên Windows (không exec bit) vẫn chạy qua `dotnet`; Unix `./file.cs` cần `chmod +x` và kernel shebang.
 
-`#:property LangVersion=preview` trên file-based **không** biến máy thành SDK 11 — vẫn cần SDK preview để C# 15. Baseline file-based = C# 14 / net10.0 trừ khi `#:property TargetFramework=net11.0` (preview).
+`#:property LangVersion=preview` trên file-based **không** biến máy thành SDK 11 — vẫn cần SDK 11. Baseline file-based = C# 14 / `net10.0`. C# 15 (union, `closed`, …) cần `#:property TargetFramework=net11.0` trên SDK 11 (RC1+: ngôn ngữ mặc định là 15, không cần `preview`). `LangVersion=preview` chỉ để thử Unsafe Evolution.
 
 `dotnet pack file.cs` → tool NuGet (`PackAsTool`); cài `dotnet tool install --add-source`. Không phải thay `dotnet run` lúc dev.
 

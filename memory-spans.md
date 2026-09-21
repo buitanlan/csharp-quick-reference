@@ -4,7 +4,7 @@ Tham chiếu nâng cao về **bộ nhớ managed**, `ref`/`Span`/`Memory`, và *
 Tập trung semantics, lifetime, pitfalls (tương tự chương pointers bên Go) — không phải tutorial GC đầy đủ.
 
 > **Baseline:** .NET **10** / C# **14** (first-class span conversions). Nhiều API (`Span`, `Memory`, `scoped`) từ C# 7.2–11.  
-> **C# 15 PREVIEW:** [§9.1 Memory safety](#91-memory-safety-c-15-preview) — `unsafe` gắn với *dereference*, không còn với *sự tồn tại pointer*.
+> **Unsafe Evolution** (vẫn preview, **không** phải C# 15 mặc định): [§9.1](#91-memory-safety-c-15-preview) — `unsafe` gắn với *dereference* và hợp đồng requires-unsafe, không còn với *sự tồn tại pointer*.
 
 ---
 
@@ -22,7 +22,7 @@ Tập trung semantics, lifetime, pitfalls (tương tự chương pointers bên G
   - [8. `scoped` (C\# 11) — lifetime](#8-scoped-c-11--lifetime)
   - [9. `unsafe` \& pointers — overview](#9-unsafe--pointers--overview)
     - [Khi **KHÔNG** dùng unsafe](#khi-không-dùng-unsafe)
-    - [9.1 Memory safety (C# 15 preview)](#91-memory-safety-c-15-preview)
+    - [9.1 Unsafe Evolution (preview)](#91-memory-safety-c-15-preview)
   - [10. `ArrayPool<T>` \& `MemoryMarshal`](#10-arraypoolt--memorymarshal)
   - [11. Pitfalls thường gặp](#11-pitfalls-thường-gặp)
   - [12. Cheat sheet chọn API](#12-cheat-sheet-chọn-api)
@@ -447,12 +447,17 @@ static int Add(int a, int b) => a + b;
 
 ### 9.1 Memory safety (C# 15 preview)
 
-> **PREVIEW (.NET 11 / C# 15).** Opt-in: SDK 11 + `<LangVersion>preview</LangVersion>`. Surface/enforcement có thể đổi trước GA (kể cả .NET 12).  
-> Mục tiêu dài hạn: `unsafe` = *thao tác truy cập nhớ CLR không quản* + hợp đồng *requires-unsafe* lan ra caller — không phải “file này có con trỏ”.
+> **Không thuộc C# 15 mặc định.** RC1 (08/09/2026) vẫn ghi đây là preview độc lập: SDK 11 **và** cả hai opt-in dưới đây. Surface có thể đổi trước khi thành mô hình production (hướng .NET 12 / C# 16). Đừng dùng làm hàng rào audit trên nhánh ship.  
+> Mục tiêu: `unsafe` = *thao tác truy cập nhớ CLR không quản* + hợp đồng *requires-unsafe* lan ra caller — không phải “file này có con trỏ”.
 
-**Baseline 14:** khai báo `T*`, `&x`, `fixed`, `sizeof`, dereference — đều trong `unsafe`.
+```xml
+<LangVersion>preview</LangVersion>
+<Features>$(Features);updated-memory-safety-rules</Features>
+```
 
-**Preview 15 — pointer relaxations** (khi compile `preview`): các thao tác sau **không** cần `unsafe` context:
+**Baseline 14:** khai báo `T*`, `&x`, `fixed`, `sizeof`, dereference — đều trong `unsafe`. `AllowUnsafeBlocks` vẫn là cổng cho từ khóa `unsafe`.
+
+**Khi preview + feature flag**, các thao tác sau **không** cần `unsafe` context:
 
 - Khai báo kiểu pointer và lấy địa chỉ `&`
 - Câu `fixed` (pin)
@@ -469,7 +474,7 @@ static int Add(int a, int b) => a + b;
 
 ```csharp
 int number = 42;
-int* pointer = &number;          // C# 15 preview: không cần unsafe
+int* pointer = &number;          // preview: không cần unsafe
 
 int[] numbers = [10, 20, 30];
 fixed (int* first = numbers)     // preview: fixed ngoài unsafe
@@ -482,19 +487,35 @@ fixed (int* first = numbers)     // preview: fixed ngoài unsafe
 }
 ```
 
-**Compat / requires-unsafe (đang hoàn thiện):** bản đầy đủ (sau này) — `unsafe` trên member = caller phải ở `unsafe` hoặc cũng đánh dấu; assembly opt-in `MemorySafetyRulesAttribute`; từ khóa `safe` cho `extern`/explicit-layout. Preview 5–7: **nới pointer** đã có; **enforcement caller** chưa đủ — đừng dựa vào để audit production.
+**RC1, khi đã opt-in:**
 
-Opt-in thực nghiệm (có thể đổi tên feature flag):
+- `await` được phép **trong** `unsafe` context. Pointer và `Span` vẫn không được dùng sau `await` nếu chúng trỏ stack — đọc giá trị ra rồi mới `await` ([§11.2](#112-async--iterators)).
+- `safe` đánh dấu khai báo *không* requires-unsafe, kể cả chỗ generator (`LibraryImport`) nơi `safe` không đổi gì khác.
+- `unsafe` trên **delegate, static constructor, destructor, và khai báo type** là lỗi: modifier đó không còn mở unsafe context cho cả kiểu.
+- `unsafe` trên member = **requires-unsafe**: caller phải ở `unsafe` context (hoặc tự đánh dấu). Assembly opt-in mang `MemorySafetyRulesAttribute`. `nameof` một member requires-unsafe **không** tính là dùng nó.
 
-```xml
-<LangVersion>preview</LangVersion>
-<!-- một số SDK preview: -->
-<Features>$(Features);updated-memory-safety-rules</Features>
+```csharp
+[LibraryImport("native")]
+internal static safe partial int GetValue();
+
+unsafe async Task<int> ReadAsync()
+{
+    int* value = stackalloc int[1];
+    unsafe
+    {
+        *value = 42;
+        int result = *value;   // xong với pointer trước await
+        await Task.Yield();
+        return result;
+    }
+}
 ```
 
-Learn: [What's new in C# 15 — Memory safety](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [blog](https://devblogs.microsoft.com/dotnet/explore-csharp-15/).
+Biểu thức `unsafe(expr)` mở unsafe context cho **một** biểu thức (field initializer, constructor initializer, `catch` filter) — cùng opt-in preview, và vẫn cần `AllowUnsafeBlocks`.
 
-**Vì sao / Khi nào thử preview:** interop/`sizeof` giảm ceremony. **Không** dùng trên .NET 10 LTS production. Dereference vẫn là điểm review.
+Learn: [What's new in C# 15 — Memory safety](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-15) · [RC1 notes](https://github.com/dotnet/core/blob/main/release-notes/11.0/preview/rc1/csharp.md).
+
+**Vì sao / Khi nào thử:** interop/`sizeof` giảm ceremony trên nhánh thí nghiệm. **Không** bật trên .NET 10 LTS. Dereference vẫn là điểm review.
 
 ---
 
@@ -601,7 +622,7 @@ Thêm overload `ReadOnlySpan<char>` cạnh `string` có thể đổi call-site i
 | API thư viện (text/binary) | `ReadOnlySpan` / `ReadOnlyMemory` |
 | Interop C / layout cố định | `unsafe` + `fixed` / `SafeHandle` |
 | Đổ khuôn bytes ↔ struct | `MemoryMarshal.Cast` / `AsBytes` |
-| Pointer khai báo (C# 15 preview) | ngoài `unsafe`; `*p` vẫn `unsafe` |
+| Pointer khai báo (Unsafe Evolution, preview) | ngoài `unsafe`; `*p` vẫn `unsafe` |
 
 ```csharp
 static int ParseCsvLine(ReadOnlySpan<char> line)
@@ -635,4 +656,4 @@ static async Task<int> ChecksumAsync(ReadOnlyMemory<byte> data)
 }
 ```
 
-**Tóm lại:** `Span` = *view stack-bound*; `Memory` = *token lưu được*; `scoped` = *không escape*; `unsafe` = van an toàn — chỉ mở khi thực sự cần (C# 15 preview: mở van đúng chỗ dereference).
+**Tóm lại:** `Span` = *view stack-bound*; `Memory` = *token lưu được*; `scoped` = *không escape*; `unsafe` = van an toàn — chỉ mở khi thực sự cần. Unsafe Evolution (preview, không phải C# 15 mặc định) chuyển van sang đúng chỗ dereference.

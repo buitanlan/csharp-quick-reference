@@ -1,6 +1,6 @@
 # Statements trong C#
 
-> **Baseline:** .NET **10** / C# **14**. Top-level statements: C# **9** (mặc định template từ .NET 6). Labeled `break`/`continue`: **C# 15 preview**.
+> **Baseline:** .NET **10** / C# **14**. Top-level statements: C# **9** (mặc định template từ .NET 6). Labeled `break`/`continue`: **C# 15** (mặc định trên `net11.0` từ RC1).
 
 **Statement** là đơn vị *thực thi* (khác *expression* cho ra giá trị). Hiểu semantics từng nhóm giúp tránh bug phạm vi, tài nguyên, và điều khiển luồng — đặc biệt với pattern matching, `using`/`await using`, và vòng lặp.
 
@@ -33,7 +33,7 @@
     - [7.5 `await foreach` (C# 8) — async streams](#75-await-foreach-c-8--async-streams)
   - [8. Jump statements: `break`, `continue`, `return`, `throw`, `goto`, `yield`](#8-jump-statements-break-continue-return-throw-goto-yield)
     - [8.1 `break` / `continue`](#81-break--continue)
-    - [8.1.1 Labeled `break` / `continue` (C# 15 preview)](#811-labeled-break--continue-c-15-preview)
+    - [8.1.1 Labeled `break` / `continue` (C# 15)](#811-labeled-break--continue-c-15)
     - [8.2 `return`](#82-return)
     - [8.3 `throw`](#83-throw)
     - [8.4 `goto` \& labeled statement](#84-goto--labeled-statement)
@@ -264,7 +264,7 @@ if (span is [0x47, 0x49, 0x46, ..]) // GIF
     DecodeGif(span);
 ```
 
-Nhánh `else if` pattern: compiler **không** chứng minh exhaustiveness như `switch` expression — dễ thiếu case. Domain đóng (enum/union preview): `switch` expression + warning thiếu arm an toàn hơn chuỗi `if`.
+Nhánh `else if` pattern: compiler **không** chứng minh exhaustiveness như `switch` expression — dễ thiếu case. Domain đóng (enum, union, `closed`): `switch` expression + warning thiếu arm an toàn hơn chuỗi `if`.
 
 ### 6.2 `switch` statement vs switch expression
 
@@ -490,9 +490,9 @@ Tương đương `GetAsyncEnumerator` + `await MoveNextAsync` + `await using` di
 - `continue` bỏ phần còn lại của vòng lặp & bắt đầu vòng mới (`for`: vẫn chạy phần iterator).
 - Baseline C# 14: chỉ ảnh hưởng vòng/`switch` **gần nhất**.
 
-#### 8.1.1 Labeled `break` / `continue` (C# 15 preview)
+#### 8.1.1 Labeled `break` / `continue` (C# 15)
 
-> **PREVIEW (.NET 11 / C# 15).** Chưa GA. Cần SDK preview + `<LangVersion>preview</LangVersion>`. Surface có thể đổi trước GA. Baseline C# 14: thoát vòng ngoài bằng `goto` hoặc cờ boolean.
+> **C# 15 / .NET 11**, mặc định trên `net11.0` từ RC1. Không cần `LangVersion=preview`. Baseline C# 14: thoát vòng ngoài bằng `goto` hoặc cờ boolean.
 
 C# 15 cho phép gắn nhãn vòng / `switch` rồi `break outer;` / `continue outer;`:
 
@@ -536,7 +536,7 @@ exit:;
 
 - Nhãn đứng **trước** vòng/`switch` cần điều khiển (cú pháp gần `goto` label, nhưng `break`/`continue` **không** nhảy tùy ý).
 - Ưu tiên hơn `goto done` khi ý định là thoát/skip vòng ngoài.
-- Trước GA: xác nhận syntax trên SDK preview bạn dùng. Không đưa vào production baseline .NET 10.
+- Không có trên C# 14 / `net10.0`. IDE0410 gợi ý thay cờ boolean hoặc `goto` bằng labeled jump khi toolchain là C# 15.
 
 **Nhãn vs `goto` label:** cùng cú pháp `name:` nhưng labeled `break` **chỉ** hợp lệ khi nhãn gắn vòng/`switch`. `break somewhere;` tới nhãn statement thường (không phải vòng) là lỗi — đó là việc của `goto`. C# 15 không biến `break` thành `goto` tùy ý.
 
@@ -763,7 +763,7 @@ unsafe
 }
 ```
 
-> Chỉ bật khi thật sự cần; xem thêm [typesystem.md](typesystem.md) và [operators.md](operators.md) (pointer ops). **C# 15 preview** nới một phần memory safety — [memory-spans.md](memory-spans.md).
+> Chỉ bật khi thật sự cần; xem thêm [typesystem.md](typesystem.md) và [operators.md](operators.md) (pointer ops). Nới “khai báo pointer” khỏi `unsafe` là **Unsafe Evolution** (vẫn preview) — [memory-spans.md](memory-spans.md).
 
 ---
 
@@ -791,7 +791,7 @@ int SumSquares(ReadOnlySpan<int> a)
 ## 13. Empty & labeled statements
 
 - **Empty**: chỉ dấu `;` — đôi khi dùng làm **no‑op** (hiếm). Nguy hiểm: `if (ok); DoWork();` — `DoWork` luôn chạy.
-- **Labeled**: `label:` đứng trước một statement để `goto` tới (C# 14) hoặc gắn vòng cho labeled `break` (C# 15 preview).
+- **Labeled**: `label:` đứng trước một statement để `goto` tới (mọi phiên bản) hoặc gắn vòng cho labeled `break` (C# 15).
 
 ```csharp
 ; // empty
@@ -808,7 +808,7 @@ if (!TryConnect())
 
 ## 14. Mẹo & best practices
 
-1. **Ưu tiên cấu trúc rõ ràng** thay vì `goto`. Labeled `break` (C# 15 preview) khi toolchain cho phép; production .NET 10 dùng cờ/`goto` có kiểm soát.
+1. **Ưu tiên cấu trúc rõ ràng** thay vì `goto`. Labeled `break` trên C# 15; trên .NET 10 dùng cờ hoặc `goto` có kiểm soát.
 2. **Luôn `break`** trong `switch` statement (trừ khi `goto`/`return`), tránh rơi qua. Switch **expression** không `break`.
 3. **Bao try/catch ở rìa hệ thống**; ở sâu bên trong để exception “bubble up” (xem [exceptions.md](exceptions.md)).
 4. **`using` declaration** cho scope dài; **`using` statement** khi cần gói nhóm nhỏ/điểm dispose cụ thể. Async resource → **`await using`**.

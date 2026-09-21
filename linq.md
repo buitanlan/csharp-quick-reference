@@ -153,6 +153,18 @@ Khi nghi: `query.ToQueryString()` (EF) hoặc log. “Chạy được” ≠ “
 
 ## 4. Nhóm toán tử chuẩn (Standard Query Operators)
 
+Nhóm dưới là **method** trên `Enumerable` / `Queryable`. Query syntax chỉ phủ một phần (bảng §5) — không có keyword cho `LeftJoin`, `CountBy`, `Chunk`, `DistinctBy`.
+
+Bổ sung sau .NET Framework, có trên baseline **net10.0** trừ dòng .NET 11:
+
+| Đời | Toán tử | Nhóm |
+|---|---|---|
+| .NET 6 | `Chunk`, `DistinctBy`, `ExceptBy`, `IntersectBy`, `UnionBy`, `MinBy`, `MaxBy`, `TryGetNonEnumeratedCount`, `Take`/`ElementAt` với `Range`/`Index`, `Zip` 3 dãy | §4.6–4.12 |
+| .NET 7 | `Order`, `OrderDescending` | §4.3 |
+| .NET 9 | `CountBy`, `AggregateBy`, `Index` | §4.2, §4.4, §4.10 |
+| .NET 10 | `LeftJoin`, `RightJoin` (bắt buộc result selector) | §4.5 |
+| .NET 11 | `FullJoin`; `Join`/`GroupJoin`/`LeftJoin`/`RightJoin` trả tuple, thêm comparer | §4.5 — **không** có trên net10.0 |
+
 ### 4.1 Filtering: `Where`, `OfType`
 
 ```csharp
@@ -193,6 +205,15 @@ Projection anonymous type / tuple: LINQ to Objects ổn; EF: `Select` DTO/`recor
 
 `SelectMany((x, i) => …)` có index — Objects; EF ít dịch. Flatten JSON/`List<List<T>>`: luôn `SelectMany`, không `Select` rồi `foreach` lồng nếu đã ở pipeline.
 
+**.NET 9+ `Index()`** — cùng ý `Select((x, i) => (i, x))`, trả `(int Index, T Item)` mà không cần selector:
+
+```csharp
+foreach (var (i, person) in people.Index())
+    Console.WriteLine($"{i}: {person.Name}");
+```
+
+Deferred. Index bắt đầu 0 theo thứ tự enumerate, không phải chỉ số gốc nếu phía trước đã `Where`. EF: `Index()` thường không dịch — đánh số sau `ToList` hoặc `ROW_NUMBER` trên SQL.
+
 ---
 
 ### 4.3 Sorting: `OrderBy`, `ThenBy`, `Reverse`
@@ -206,7 +227,12 @@ var desc = people.OrderByDescending(p => p.Age);
 
 **`OrderBy` ổn định** (LINQ to Objects): phần tử bằng nhau giữ thứ tự ban đầu. Gọi `OrderBy` lần hai **thay** sort, không phải then — dùng `ThenBy`.  
 `IQueryable`: sort trên server; collation SQL ≠ `StringComparer.Ordinal` — đừng giả định culture.  
-`.NET 7+`: `Order` / `OrderDescending` khi key là chính phần tử.
+**.NET 7+:** `Order` / `OrderDescending` khi phần tử tự so sánh được (`IComparable<T>`), không cần key:
+
+```csharp
+var asc = nums.Order();
+var desc = names.OrderDescending();
+```
 
 ### 4.4 Grouping: `GroupBy`, `ToLookup`
 
@@ -232,6 +258,28 @@ var counts = orders.GroupBy(o => o.CustomerId, (id, g) => new { id, n = g.Count(
 Query syntax: `group x by k into g` — `into` tiếp tục query trên các nhóm (`g.Key`, `g.Count()`).
 
 Nhóm rỗng: `GroupBy` không yield nhóm không có phần tử (khác SQL `GROUP BY` trên bảng dim). Muốn mọi key kể cả 0 count: left join tập key × `GroupBy` / `ToLookup` + duyệt key phía ngoài.
+
+**.NET 9+ `CountBy` / `AggregateBy`:** đếm hoặc gộp **theo key trong một lần**, không cấp phát `IGrouping` + list phần tử. Đúng khi chỉ cần số / tổng, không cần các phần tử trong nhóm. Deferred đến lúc enumerate, rồi **đọc hết** nguồn (cùng họ buffer với `GroupBy`).
+
+```csharp
+// KeyValuePair<dept, count>
+foreach (var (dept, n) in employees.CountBy(e => e.Department))
+    Console.WriteLine($"{dept}: {n}");
+
+// seed chung cho mọi key
+var totals = orders.AggregateBy(
+    o => o.CustomerId,
+    seed: 0m,
+    (sum, o) => sum + o.Amount);
+
+// seed theo key (nhóm mới bắt đầu từ giá trị riêng)
+var totals2 = orders.AggregateBy(
+    o => o.CustomerId,
+    seedSelector: id => 0m,
+    (sum, o) => sum + o.Amount);
+```
+
+Comparer key tùy chọn (tham số cuối). `CountBy` không có nhóm count 0. EF: `GroupBy` + `Count`/`Sum` vẫn là đường SQL; `CountBy`/`AggregateBy` trên `IQueryable` kiểm tra bản EF trước khi giả định dịch.
 
 `IGrouping<TKey,T>` implement `IEnumerable<T>` — `g.Where`/`g.Select` là Objects trên nhóm **đã materialize** (sau khi query chạy). EF: đừng `GroupBy(e => e).Select(g => g.First())` kiểu “lấy entity đầy đủ mỗi nhóm” nếu SQL không dịch — dùng `Select` cột + key, hoặc window SQL thô.
 
@@ -265,6 +313,43 @@ join o in orders on new { c.Id, c.Region } equals new { Id = o.CustomerId, o.Reg
 
 `equals` **không** đối xứng như SQL `ON` tùy ý — trái = outer, phải = inner. Method syntax: `Join` / `GroupJoin`. Nested loop `SelectMany` + `Where` = inner join không tối ưu bằng `Join` (hash) trên Objects.
 
+**.NET 10 — `LeftJoin` / `RightJoin`.** Cùng hash join, không phải `GroupJoin` + `DefaultIfEmpty`. Không có keyword query syntax. Phần không khớp là `default`: class → `null`; struct/tuple → giá trị default (biến **không** null — đừng `?.` lên chính struct).
+
+```csharp
+var left = customers.LeftJoin(
+    orders,
+    c => c.Id,
+    o => o.CustomerId,
+    (c, o) => new { c, o }); // o null nếu customer không có order (order là class)
+
+var right = customers.RightJoin(
+    orders,
+    c => c.Id,
+    o => o.CustomerId,
+    (c, o) => new { c, o }); // mọi order; c default nếu không có customer
+```
+
+`RightJoin` giữ **mọi** phần tử dãy thứ hai (`orders`). Một outer nhiều inner → nhiều dòng, giống `Join`, không gói thành nhóm (`GroupJoin` mới gói).
+
+EF Core 10 dịch `LeftJoin`/`RightJoin` thành `LEFT`/`RIGHT JOIN` khi selector và key dịch được. Query syntax left join (§ trên) vẫn đúng và là cách duy nhất trên net8/net9.
+
+**.NET 11** (không có trên net10.0): `FullJoin` (cả hai phía, bên thiếu = `default`). `Join`, `GroupJoin`, `LeftJoin`, `RightJoin`, `FullJoin` thêm overload **không** result selector — trả `(TOuter, TInner)` hoặc nhóm — và `IEqualityComparer` tùy chọn. Có trên `Enumerable`, `Queryable`, `AsyncEnumerable`.
+
+```csharp
+// SDK 11 / net11.0 — tuple, không selector
+foreach (var (product, category) in products.LeftJoin(
+    categories, p => p.Category, c => c.Name))
+{
+    _ = category; // default khi product không khớp category
+}
+
+foreach (var (product, category) in products.FullJoin(
+    categories, p => p.Category, c => c.Name))
+{
+    // product default nếu category không có product, và ngược lại
+}
+```
+
 ### 4.6 Set: `Distinct`, `Union`, `Intersect`, `Except`
 
 ```csharp
@@ -274,7 +359,22 @@ var inter = a.Intersect(b);
 var diff  = a.Except(b);
 ```
 
-Mặc định: `EqualityComparer<T>.Default` (reference cho class không override). Entity EF: `Distinct` trên DTO/`Select` cột, không phải instance tracker. `DistinctBy` (net6+) theo key; EF dịch tùy version — kiểm tra SQL.
+Mặc định: `EqualityComparer<T>.Default` (reference cho class không override). Entity EF: `Distinct` trên DTO/`Select` cột, không phải instance tracker.
+
+**.NET 6+ theo key** — đừng tự viết `GroupBy` chỉ để lấy phần tử đầu:
+
+```csharp
+var unique = users.DistinctBy(u => u.Email, StringComparer.OrdinalIgnoreCase);
+
+// ExceptBy / IntersectBy: dãy thứ HAI là key, không phải phần tử
+var fresh = all.ExceptBy(existingIds, x => x.Id);
+var kept = all.IntersectBy(wantedIds, x => x.Id);
+
+// UnionBy: dãy thứ hai vẫn là phần tử; trùng key thì giữ phần tử của dãy đầu
+var merged = a.UnionBy(b, x => x.Id);
+```
+
+`ExceptBy(existing, x => x.Id)` khi `existing` là `IEnumerable<User>` **không** compile — tham số đó là `IEnumerable<TKey>`. `UnionBy` thì ngược lại. EF dịch `DistinctBy` tùy version — xem SQL; `Except` entity nguyên con thường không phải ý bạn muốn.
 
 ### 4.7 Quantifiers: `Any`, `All`, `Contains`
 
@@ -298,6 +398,12 @@ var onlyOr = numbers.SingleOrDefault();
 
 `First` vs `Single`: `Single` phải **đúng một** (EF `TOP 2`). API “get by id”: `Single`/`SingleOrDefault` nếu id unique; list/filter: `FirstOrDefault`. `Last` trên `IQueryable` cần `OrderBy` — không thì SQL không xác định. `default(T)` với `int` = 0: đừng nhầm “không có” với giá trị 0 — dùng `FirstOrDefault` + nullable / `bool` pattern.
 
+**.NET 6+ `MinBy` / `MaxBy`:** trả **phần tử**, không trả key. Rỗng thì ném, giống `Min`/`Max`. Hòa key: lấy phần tử gặp **trước**.
+
+```csharp
+Person youngest = people.MinBy(p => p.Age)!; // ném nếu people rỗng
+```
+
 ### 4.9 Partitioning: `Skip`, `Take`, `SkipWhile`, `TakeWhile`
 
 ```csharp
@@ -315,7 +421,7 @@ int sum   = numbers.Sum();
 var total = numbers.Aggregate(0, (acc, x) => acc + x);
 ```
 
-Immediate. `Aggregate` trên EF **hiếm khi** dịch — giữ Objects. `Min`/`Max` rỗng throw; `MinBy`/`MaxBy` (net6+). `Count` predicate vs `Where`+`Count`: Objects tương đương; EF thường cùng `COUNT`/`SUM(CASE`.
+Immediate. `Aggregate` trên EF **hiếm khi** dịch — giữ Objects. `Min`/`Max` rỗng throw; `MinBy`/`MaxBy` (net6+) trả phần tử (§4.8). `Count` predicate vs `Where`+`Count`: Objects tương đương; EF thường cùng `COUNT`/`SUM(CASE`. Đếm theo nhóm không cần danh sách phần tử: `CountBy` (§4.4), không `GroupBy` rồi `Count`.
 
 ### 4.11 Generation/Conversion: `Range`, `Repeat`, `Empty`, `ToList`, `ToArray`, `ToDictionary`, `ToHashSet`…
 
@@ -331,17 +437,27 @@ var set  = items.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
 `ToDictionary` key trùng throw; `ToLookup` thì không. `Enumerable.Empty<T>()` cached — tốt hơn `new T[0]` khi return rỗng.
 
+**.NET 6+ `TryGetNonEnumeratedCount`:** lấy `Count` **không** duyệt khi nguồn là `ICollection<T>` / mảng / `List<T>` (và một số iterator biết trước độ dài). `false` thì chưa đếm — `Where`/`Select` thường rơi vào nhánh này:
+
+```csharp
+if (!source.TryGetNonEnumeratedCount(out int n))
+    n = source.Count(); // duyệt
+```
+
+Đừng gọi `Count()` “cho chắc” trên generator / EF: `TryGet` `false` trên `IQueryable` không có nghĩa là được phép `Count()` sync. EF dùng `CountAsync`.
+
 ### 4.12 `Zip`, `Chunk`, `Append/Prepend`, `SequenceEqual`, `DefaultIfEmpty`
 
 ```csharp
-var zipped = xs.Zip(ys, (x,y) => (x,y)); // ghép 2 dãy theo vị trí; dừng khi một bên hết
-var chunks = numbers.Chunk(100);         // tách khối 100 phần tử
+var zipped = xs.Zip(ys, (x, y) => (x, y)); // ghép 2 dãy theo vị trí; dừng khi một bên hết
+var triples = xs.Zip(ys, zs);              // .NET 6+: (T1, T2, T3), không selector; cũng dừng ở dãy ngắn nhất
+var chunks = numbers.Chunk(100);           // IEnumerable<T[]> — khối cuối có thể ngắn hơn size
 var withHead = seq.Prepend(head);
 bool same = seq1.SequenceEqual(seq2);
-var withDefault = seq.DefaultIfEmpty(0); // nếu rỗng → có 1 phần tử 0
+var withDefault = seq.DefaultIfEmpty(0);   // nếu rỗng → có 1 phần tử 0
 ```
 
-`DefaultIfEmpty` = mảnh left join. `Chunk` Objects; EF paging dùng `Skip`/`Take` có `OrderBy`.
+`DefaultIfEmpty` = mảnh left join kiểu query syntax. Trên .NET 10 ưu tiên `LeftJoin` (§4.5) khi hai dãy và một key. `Chunk` là Objects; EF paging dùng `Skip`/`Take` có `OrderBy`. `Chunk(0)` hoặc size âm thì ném.
 
 ---
 
@@ -359,7 +475,7 @@ var withDefault = seq.DefaultIfEmpty(0); // nếu rỗng → có 1 phần tử 0
 | `let t = expr select ...` | (giới thiệu biến trung gian → lồng `Select`) |
 | `into g ...` | tiếp tục với kết quả `GroupJoin`/`group` |
 
-`let` = `Select` anonymous giữ biến — EF dịch được nếu `expr` dịch được. Query syntax **không** có `Distinct`/`Chunk` keyword → chấm method xen: `(from … select x).Distinct()`.
+`let` = `Select` anonymous giữ biến — EF dịch được nếu `expr` dịch được. Query syntax **không** có `Distinct`/`Chunk`/`LeftJoin` keyword → chấm method xen: `(from … select x).Distinct()`, hoặc `customers.LeftJoin(...)` (§4.5).
 
 ---
 
@@ -395,8 +511,8 @@ Composition: giữ `IQueryable` qua layer (`IQueryable<User> Query()`) dễ leak
 ## 7. Async LINQ & Streams
 
 - **Enumerable async**: dùng `IAsyncEnumerable<T>` + `await foreach`.  
-- **Toán tử async cho `IAsyncEnumerable<T>`**: cần gói mở rộng (ví dụ `System.Linq.Async`) để có `WhereAwait`, `SelectAwait`, `ToListAsync`, `FirstOrDefaultAsync` trên async streams.  
-- **EF Core**: **`ToListAsync`, `SingleAsync`, `AnyAsync`…** trên `IQueryable` — đây **không** phải LINQ to Objects async; chúng execute SQL async. `foreach` đồng bộ trên `DbSet` chặn thread.
+- **Toán tử async cho `IAsyncEnumerable<T>`** trên net10: gói `System.Linq.Async` (`WhereAwait`, `SelectAwait`, `ToListAsync` trên stream). **EF Core** `ToListAsync` / `SingleAsync` là execute SQL, không phải gói đó.  
+- **.NET 11:** `Join` / `LeftJoin` / `RightJoin` / `FullJoin` có trên `AsyncEnumerable` trong BCL. net10 chưa có — đừng gọi `LeftJoin` trên `IAsyncEnumerable` với SDK 10.
 
 ```csharp
 await foreach (var line in ReadLinesAsync(path).Where(x => x.Length > 0))
@@ -465,7 +581,7 @@ public static class LinqEx
 }
 ```
 
-Gợi ý: nhiều operator đã có trong BCL (`DistinctBy`, `MaxBy`, `MinBy`, `Chunk`, `CountBy` trên TFM mới — kiểm tra `net10.0`). Viết đè tên chuẩn (`Where`) = nightmare overload.
+Gợi ý: `DistinctBy`, `MaxBy`, `MinBy`, `Chunk`, `CountBy`, `AggregateBy`, `Index`, `LeftJoin`, `RightJoin` đã có trong BCL baseline net10.0. `FullJoin` và overload tuple là .NET 11. Viết đè tên chuẩn (`Where`, `DistinctBy`) = nightmare overload.
 
 ### 9.1 Extension members (C# 14) vs toán tử LINQ
 
@@ -489,7 +605,7 @@ public static IQueryable<User> Active(this IQueryable<User> s)
 
 Prefer BCL / package (`System.Linq.Async`) trước khi viết thêm.
 
-C# 14 extension **indexer** không có (indexer extension = **C# 15 preview** — [oop.md](oop.md)). Đừng chờ `xs[1..]` custom qua extension block thay `ElementAt` trong query EF.
+C# 14 extension **indexer** không có (indexer extension = **C# 15** — [oop.md](oop.md)). Đừng chờ `xs[1..]` custom qua extension block thay `ElementAt` trong query EF.
 
 ---
 
@@ -535,15 +651,18 @@ var top = students
     .Take(10)
     .ToList();
 
-// Left join customers - orders và tính tổng
-var totals = from c in customers
-             join o in orders on c.Id equals o.CustomerId into grp
-             from o in grp.DefaultIfEmpty()
-             group o by c into g
-             select new {
-                Customer = g.Key,
-                Total = g.Where(x => x != null).Sum(x => x!.Amount)
-             };
+// Left join — .NET 10 method. Query syntax (mọi TFM): GroupJoin + DefaultIfEmpty, xem §4.5.
+var totals = customers.LeftJoin(
+        orders,
+        c => c.Id,
+        o => o.CustomerId,
+        (c, o) => (c, o))
+    .GroupBy(x => x.c)
+    .Select(g => new
+    {
+        Customer = g.Key,
+        Total = g.Where(x => x.o != null).Sum(x => x.o!.Amount)
+    });
 
 // Grouping tháng-năm, đếm số đơn
 var monthly = orders
