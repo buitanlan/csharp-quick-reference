@@ -37,7 +37,7 @@
     - [4.3 Gợi ý về `record`](#43-gợi-ý-về-record)
   - [5. Properties](#5-properties)
     - [5.1 Auto-property \& backing field](#51-auto-property--backing-field)
-    - [5.2 Truy cập backing field (C#14)](#52-truy-cập-backing-field-c14)
+    - [5.2 Truy cập backing field (C#14)](#52-truy-cập-backing-field--từ-khóa-field-c-14)
     - [5.3 Getter/setter nâng cao](#53-gettersetter-nâng-cao)
     - [5.4 `init`-only (C# 9) \& `required` (C# 11)](#54-init-only-c-9--required-c-11)
     - [5.5 Expression-bodied/Computed property](#55-expression-bodiedcomputed-property)
@@ -97,7 +97,7 @@ public class Counter
 ### 1.3 Access modifiers
 
 - `public`, `private`, `protected`, `internal`, `protected internal`, `private protected`.  
-- **`file`** (C# 11): member/type chỉ thấy trong **cùng file** — hữu ích generated code / helper không leak ra assembly.  
+- **`file`** (C# 11): chỉ dùng trên **type top-level**, giới hạn trong cùng source file; không phải modifier cho member hoặc nested type.
 - Quy tắc tổng quát: **thu hẹp phạm vi** nhất có thể (*least privilege*).
 
 | Modifier | Cùng class | Derived (cùng assembly) | Derived (khác assembly) | Cùng assembly | Khác assembly |
@@ -112,7 +112,7 @@ public class Counter
 
 \*Derived cùng assembly thấy `internal` như mọi type cùng assembly.
 
-**`file` — semantics:** type/member `file` **không** visible từ file khác, kể cả cùng assembly, kể cả `InternalsVisibleTo`. Compiler đổi tên (mangled) để tránh đụng. Khác `internal`: `internal` vẫn dùng được từ file khác trong assembly.
+**`file` — semantics:** type file-local không visible từ file khác, kể cả cùng assembly/InternalsVisibleTo. Compiler đổi tên để tránh đụng. Member bên trong type đó vẫn dùng access modifier thông thường.
 
 ```csharp
 // File: JsonHelpers.cs — source generator / helper cục bộ
@@ -135,7 +135,7 @@ file sealed class TinyReader(string json)
 |---|---|---|---|
 | Đặt trên type top-level | ❌ (type top-level không `private`) | ✅ | ✅ |
 | Thấy từ file khác cùng assembly | n/a | ❌ | ✅ |
-| Nested type | ✅ `private class Inner` | ✅ (hiếm cần) | ✅ |
+| Nested type | ✅ `private class Inner` | ❌ | ✅ |
 
 **Pitfall:** `file` không thay `internal` cho API module. Hai file cùng tên type `file class Foo` **được** (mỗi file một Foo). Đừng `public` nested trong `file` type — vô nghĩa với bên ngoài file.
 
@@ -320,7 +320,7 @@ var u = new User { Email = "a@b.com", Name = "Alice" };
 ```
 
 - **Object initializer** giúp đọc dễ, tránh nhiều ctor overload.  
-- `required` buộc caller khởi tạo trước khi object “hoàn tất”.
+- Required buộc caller gán member khi tạo object, là kiểm tra compile-time; không bảo đảm non-null hay hợp lệ ở runtime (reflection/deserializer có thể bỏ qua). `[SetsRequiredMembers]` là cam kết của constructor mà compiler không kiểm chứng. Type có required member thường không thỏa constraint new() nếu ctor không có attribute này.
 
 ### 1.9 Primary constructor (C# 12)
 
@@ -334,7 +334,7 @@ public class Rectangle(double width, double height)
 ```
 
 - Khai báo tham số **ngay trên tiêu đề class**, được dùng trong body để gán property/field.  
-- Tham số primary ctor là **phạm vi toàn class** (có thể dùng trong field/property initializer, method, nested…).  
+- Tham số primary ctor dùng trong initializer và instance member của type; nested type không tự có instance của enclosing type để đọc tham số đó. Class/struct thông thường không tự sinh public property như positional record.
 - Secondary ctor phải gọi `: this(...)` để chạy primary ctor.
 
 #### Pitfalls: capture & mutable
@@ -503,7 +503,7 @@ switch (s)
 
 > **C# 15 / .NET 11**, mặc định trên `net11.0` từ RC1. Không cần `LangVersion=preview`. Không thuộc baseline .NET 10.
 
-`closed` trên class/record: tập kiểu derived **cố định trong assembly** — compiler biết mọi subtype → `switch` exhaustive **không** cần `_`.
+Closed trên class/record đóng tập **direct derived type** trong cùng assembly/module; compiler dùng các type này xét exhaustiveness. Nó ngầm abstract, không được thêm abstract/sealed/static. Derived type không tự closed: consumer vẫn có thể kế thừa một nhánh con mở. [Đặc tả closed hierarchies](https://learn.microsoft.com/en-us/%20%20dotnet/csharp/language-reference/proposals/closed-hierarchies).
 
 Khác **union** (`typesystem.md` §18): union *ghép* các kiểu có sẵn (không cần thừa kế chung); `closed` là *hierarchy* OOP đóng.
 
@@ -519,16 +519,16 @@ string Label(GateState s) => s switch
 };
 ```
 
-- Derived type ngoài assembly khai báo `closed` → lỗi.  
+- Kế thừa trực tiếp closed base từ assembly khác → lỗi.
 - Dùng khi mô hình trạng thái/ADT vẫn muốn kế thừa + shared members.  
 - Union vs closed: không chung base → `union`; có cây kế thừa + exhaustiveness → `closed`.
 
-**Semantics:** `closed` *đóng* tập subtype **trong assembly khai báo**. Compiler dùng danh sách đó cho exhaustiveness — giống union nhưng vẫn là OOP (virtual, field, `base`). `T where T : GateState` cũng exhaustive khi `GateState` là `closed`: `T` không thêm case ngoài danh sách đã biết (từ Preview 7, giữ trong C# 15). Metadata: `IsClosedTypeAttribute.DerivedTypes`.
+**Semantics:** compiler xét direct descendants, kể cả với T bị constraint vào closed base. Pattern của một nhánh mở cũng match hậu duệ của nhánh đó. Metadata dùng IsClosedTypeAttribute; không nên phụ thuộc layout metadata nội bộ để thay cho kiểm tra type.
 
 ```csharp
-public closed abstract class Result;
-public sealed class Ok(int Value) : Result;
-public sealed class Err(string Message) : Result;
+public closed class Result;
+public sealed class Ok(int value) : Result { public int Value { get; } = value; }
+public sealed class Err(string message) : Result { public string Message { get; } = message; }
 
 string Show(Result r) => r switch
 {
@@ -550,7 +550,7 @@ string Show(Result r) => r switch
 | Exhaustive `switch` | ✅ | ✅ | ❌ (`_`) |
 | Plugin thêm case ngoài assembly | ❌ | ❌ | ✅ |
 
-**Pitfall:** thư viện `closed` **cấm** consumer derive — đó là điểm của feature, không phải bug. Đừng `closed` nếu bạn muốn SDK mở rộng state. `closed` **không** tự thêm discriminator JSON. Serialize kiểu concrete thì STJ ghi đúng kiểu đó, không `$type`. API nhận **base** `closed` cần opt-in:
+**Pitfall:** closed cấm consumer kế thừa **trực tiếp** base, không tự sealed mọi nhánh. Nếu cần đóng toàn bộ cây, dùng sealed/closed cho các nhánh. Closed không tự thêm discriminator JSON; serialize qua base cần opt-in:
 
 ```csharp
 [JsonPolymorphic(InferClosedTypePolymorphism = true)]
@@ -558,6 +558,8 @@ public closed record class PaymentEvent(string PaymentId);
 ```
 
 STJ suy ra derived trong assembly và ghi `$type`. Cùng ý có thể đặt trên `JsonSerializerOptions.InferClosedTypePolymorphism`. Subtype lạ (plugin, payload cũ) không nằm trong tập đóng → deserialize fail. Union (không discriminator) vs `closed` + `$type`: xem [typesystem.md §18](typesystem.md#18-union-types-c-15).
+
+Trên baseline .NET 10, dùng danh sách `[JsonDerivedType]` và discriminator tường minh; xem [System.Text.Json: polymorphism](system-text-json.md#6-polymorphism-và-discriminator).
 
 **Vì sao / Khi nào dùng:** state machine, AST, Result/Error **cùng assembly**. Plugin architecture → interface mở, không `closed`.
 
@@ -611,7 +613,7 @@ log.Info("hi");                 // default
 
 C# 8 cho phép member `static` trên interface. Trước C# 15, compiler buộc runtime có **default interface implementations** (`RuntimeFeature.DefaultImplementationsOfInterfaces`) mới khai báo và gọi được các static đó. **C# 15** (mặc định `net11.0` từ RC1) gỡ ràng buộc cho static **non-virtual**: `I.Helper()` là lời gọi static trực tiếp, không cần DIM.
 
-`static abstract` / `static virtual` (C# 11, generic math) **vẫn** cần `RuntimeFeature.VirtualStaticsInInterfaces`. Chúng resolve lúc compile theo `T`, không phải vtable instance. `static sealed` ghi tường minh “non-virtual” — static interface vốn đã non-virtual nếu không có `abstract`/`virtual`.
+Static abstract/virtual (C# 11) vẫn cần RuntimeFeature.VirtualStaticsInInterfaces. Compiler ràng buộc lời gọi qua T; runtime/JIT chọn implementation theo type argument, không phải instance receiver. Static sealed ghi tường minh non-virtual.
 
 ```csharp
 public interface ILog
@@ -961,9 +963,10 @@ public class Timer
 ### 7.3 Đăng ký/hủy & phát sự kiện
 
 ```csharp
-var t = new Timer();
-t.Tick += (s, e) => Console.WriteLine("tick");
-t.Tick -= Handler; // luôn hủy khi không còn dùng để tránh memory leak
+var t = new Timer(); // Timer do ví dụ trên định nghĩa, không phải System.Threading.Timer
+EventHandler handler = (s, e) => Console.WriteLine("tick");
+t.Tick += handler;
+t.Tick -= handler; // giữ đúng delegate đã đăng ký
 ```
 
 - Khi phát sự kiện: dùng `?.Invoke` để an toàn null & tránh race condition.
@@ -1010,7 +1013,7 @@ public class Source
 - `event` khác **public delegate field**: field có thể bị gọi từ ngoài → **tránh**.  
 - Luôn **hủy đăng ký** khi không cần (đặc biệt vòng đời dài).  
 - Dùng `protected virtual OnXxx` thay vì `public void RaiseXxx`.  
-- Cân nhắc **Async events**? Không có cơ chế chuẩn; thường **không** khuyến khích `async void` trong event handler (khó quản lý lỗi).
+- Event UI cần handler void có thể dùng async void; bắt lỗi bên trong và tách logic thành method Task để kiểm tra/await được. Publisher không await được async void; pipeline cần chờ handler nên thiết kế callback Func<Task> riêng.
 
 **Vì sao leak:** multicast delegate trên publisher **giữ reference mạnh** tới subscriber. Publisher sống lâu (static, singleton, `App`/`HttpClient` wrapper) mà subscriber là form/page ngắn → GC **không** thu subscriber.
 
@@ -1049,10 +1052,10 @@ clock.Tick += (_, _) => { };            // ❌ không -= được cùng instance
 | `-=` tường minh / `IDisposable` | Subscriber ngắn, publisher dài |
 | Event chỉ trên object cùng vòng đời | Form tự chết cùng control |
 | Weak event / `WeakEventManager` (WPF) | UI toolkit |
-| `IObservable` + `Unsubscribe` | reactive |
+| `IObservable<T>.Subscribe` trả IDisposable; dispose subscription | reactive |
 | Không event — callback/`Channel` | pipeline rõ owner |
 
-**Pitfall:** `static event` gần như chắc leak nếu subscribe từ instance. Thread-safe invoke: copy delegate rồi invoke (`var h = Tick; h?.Invoke`) — field-like event compiler đã làm tương tự với `?.Invoke`. Không `async void` handler: exception nuốt / crash sync context.
+**Pitfall:** static event giữ subscriber sống tới khi unsubscribe. Snapshot delegate bằng `Tick?.Invoke(...)` tránh race null giữa kiểm tra và gọi, **không** làm state của subscriber thread-safe. Async void handler phải xử lý lỗi bên trong; lỗi không được giữ trong Task cho publisher.
 
 **Vì sao / Khi nào dùng event:** UI, observer trong process, plugin in-process. Service boundary → message/queue, không `event` CLR.
 
@@ -1062,7 +1065,7 @@ clock.Tick += (_, _) => { };            // ❌ không -= được cùng instance
 
 C# 14 giới thiệu khối **`extension`** trong `static class` (top-level, không generic) để khai báo *extension members*: method, property, operator — theo kiểu **instance** hoặc **static** của receiver. Classic extension method (`this T` trên tham số đầu) vẫn hoạt động và **tương thích IL** với dạng mới.
 
-> Góc nhìn method/API: xem thêm [methods.md — §12](./methods.md#12-this-và-extension-method).  
+> Góc nhìn method/API: xem thêm [methods.md — §12](./methods.md#12-this-và-extension-method--extension-members).
 > **C# 15:** extension **indexer** — [§6.4](#64-extension-indexers-c-15).
 
 ### 8.1 `extension` block — cú pháp
@@ -1128,7 +1131,7 @@ public static class StringExtensions
     }
 }
 
-"  ".IsBlank;           // true
+bool blank = "  ".IsBlank; // true — property access phải nằm trong biểu thức hợp lệ
 "hello world".Truncate(5); // "hello"
 ```
 

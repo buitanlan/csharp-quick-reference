@@ -19,10 +19,10 @@ Literal không “chạy” — compiler nhúng giá trị (hoặc handler nội
   - [5. Literal chuỗi (`string`) thường \& verbatim `@` + interpolated `$`](#5-literal-chuỗi-string-thường--verbatim---interpolated-)
     - [5.1 Chuỗi thường (có escape)](#51-chuỗi-thường-có-escape)
     - [5.2 Verbatim `@"..."` (không escape)](#52-verbatim--không-escape)
-    - [5.3 Interpolated `$"..."` — handler, culture, alignment](#53-interpolated--handler-culture-alignment)
+    - [5.3 Interpolated `$"..."` — handler, culture, alignment](#53-interpolated---handler-culture-alignment)
     - [5.4 Kết hợp `@$` hoặc `$@`](#54-kết-hợp--hoặc-)
   - [6. Raw string literal `"""` (C# 11) \& UTF-8 `"..."u8`](#6-raw-string-literal--c-11--utf-8-u8)
-    - [6.1 Raw string `""" ... """` — indent \& quotes](#61-raw-string----indent--quotes)
+    - [6.1 Raw string `""" ... """` — indent \& quotes](#61-raw-string-----indent--quotes)
     - [6.2 UTF-8 string literal `"..."u8` (C# 11)](#62-utf-8-string-literal-u8-c-11)
   - [7. Boolean \& `null` \& `default` literal](#7-boolean--null--default-literal)
   - [8. Hằng số (`const`) vs `readonly`](#8-hằng-số-const-vs-readonly)
@@ -36,8 +36,8 @@ Literal không “chạy” — compiler nhúng giá trị (hoặc handler nội
 - **Cơ số**: thập phân (mặc định), **hex `0x`**, **nhị phân `0b`**.
 - **Kiểu mặc định**: `int` nếu vừa; nếu không vừa → `uint` / `long` / `ulong` theo **suffix** hoặc **ngữ cảnh**.
 - **Suffix** để chỉ kiểu rõ ràng (không phân biệt thứ tự chữ cái, nên viết hoa cho dễ đọc):
-  - `U` → `uint`
-  - `L` → `long`
+  - `U` → kiểu đầu tiên chứa được giá trị trong `uint`, `ulong`
+  - `L` → kiểu đầu tiên chứa được giá trị trong `long`, `ulong`
   - `UL` (hoặc `LU`) → `ulong`
 - Có thể dùng dấu gạch dưới để giúp dễ đọc hơn, dấu gạch dưới không ảnh hưởng đến giá trị.
 
@@ -61,7 +61,7 @@ Literal quá lớn cho mọi kiểu nguyên → lỗi compile. `int x = 3_000_00
 
 - **Mặc định** cho số thực: `double`.
 - **Suffix**: `F/f` → `float`, `D/d` → `double`, `M/m` → `decimal`.
-- Hỗ trợ **kí pháp khoa học** cho `float`/`double`: `1.23e-2`. `decimal` **không** dùng `e`.
+- Hỗ trợ **kí pháp khoa học** cho cả `float`, `double`, `decimal`: `1.23e-2`, `1.23e-2F`, `1.23e-2M`.
 
 ```csharp
 double dx = 3.14;       // mặc định double
@@ -69,15 +69,14 @@ float  fx = 3.14F;      // float
 decimal money = 123_456.78M; // decimal cho tài chính
 
 double e  = 1.2e3;      // 1200
-// decimal không có e/E:
-decimal dm = 1_200.00M;
+decimal dm = 1.2e3M;    // 1200m — decimal cũng có e/E
 ```
 
 > `float`/`double` theo **IEEE 754** (nhị phân) → có sai số; `decimal` theo **thập phân** → phù hợp tiền tệ.
 
 **Pitfall:** `float f = 0.1;` không compile (`0.1` là `double`); cần `0.1F`. `0.1 + 0.2 == 0.3` có thể **false** với `double`. Tiền tệ: luôn `M`.
 
-`decimal` literal chính xác thập phân trong phạm vi 28–29 chữ số có nghĩa; overflow literal → lỗi compile. `float` literal lớn thành `Infinity` lúc compile? Thường overflow warning/error tùy giá trị. Đừng so `==` tiền tệ `double`.
+`decimal` có khoảng 28–29 chữ số có nghĩa, scale 0–28; các phép chia vẫn có thể làm tròn (`1m / 3m`). Literal vượt miền biểu diễn gây lỗi compile. Với `float`/`double`, overflow **phép tính runtime** có thể cho `Infinity`; đừng nhầm với literal quá lớn. Quy tắc làm tròn tiền tệ phải được chọn tường minh.
 
 ---
 
@@ -85,13 +84,13 @@ decimal dm = 1_200.00M;
 
 - Dùng để **nhóm chữ số** cho dễ đọc (C# 7+).
 - Hợp lệ ở **giữa** chữ số, ở **phần nguyên, phần thập phân, và số mũ** (với float/double).
-- **Không** đặt ở đầu/cuối, ngay sau prefix `0x/0b`, trước/ sau dấu chấm thập phân, hay trước suffix.
+- **Không** đặt ở đầu/cuối, cạnh dấu chấm, ký hiệu `e/E`, dấu của số mũ, hay trước suffix. **C# 7.2+** cho phép `_` ngay sau prefix `0x/0b` (`0x_FF`, `0b_1010`). Có thể có nhiều `_` liên tiếp giữa chữ số.
 
 ```csharp
 int    n  = 1_000_000;
 double pi = 3.1415_9265;
-double ee = 1_23e4_5;   // 1.23 × 10^45
-int    hx = 0xDEAD_BEEF;
+double ee = 1_23e4_5;   // 123 × 10^45 = 1.23 × 10^47
+uint   hx = 0xDEAD_BEEF; // không vừa int; literal có kiểu uint
 ```
 
 ---
@@ -174,7 +173,7 @@ string inv = fs.ToString(CultureInfo.InvariantCulture);
 ```csharp
 string s = $"user={id}";                 // handler → string
 FormattableString f = $"user={id}";      // hole chưa ghép
-object[] args = f.GetArguments();
+object[] formatArgs = f.GetArguments(); // tránh trùng args của top-level entry
 ```
 
 **Escape hole:** `{{` / `}}` → `{` / `}`. C# 11 raw: tăng `$` để đổi delimiter (`$$""" {not a hole} {{expr}} """` — một `{` literal, `{{expr}}` là hole).
@@ -186,9 +185,9 @@ var raw = $$"""
     """;
 ```
 
-**Pitfall:** side-effect trong hole (`$"{++i} {++i}"`) — thứ tự xác định nhưng khó đọc. Exception trong hole → cả interpolation fail. `$"..."u8` → UTF-8 interpolated span (C# 11) — format hạn chế hơn string.
+**Pitfall:** side-effect trong hole (`$"{++i} {++i}"`) có thứ tự xác định nhưng khó đọc. Exception trong hole làm interpolation fail. **Không hỗ trợ** `$"..."u8` trên baseline C# 14: UTF-8 literal không nhận interpolation.
 
-**Interpolated **const** (C# 10):** mọi hole là `const` → kết quả `const string` — xem §8.
+**Interpolated const (C# 10):** mọi hole phải là hằng **`string`**, không có alignment/format; `const int` trong hole không đủ để tạo `const string` — xem §8.
 
 **Handler & alloc:** C# 10 `DefaultInterpolatedStringHandler` — vài hole nhỏ có thể không alloc `string.Format` array. Vòng lặp cực nóng: `string.Create(length, state, span => ...)` hoặc `IBufferWriter`. Logging: `LoggerExtensions` nhận hole **không** gọi `ToString` nếu level tắt (template), khác `$"..."` **luôn** materialize nếu bạn truyền `string` đã nội suy.
 
@@ -213,7 +212,7 @@ string path2 = $@"C:\Users\{Environment.UserName}\docs";
 
 - Không cần escape **backslash** hay `"`; giữ nguyên **xuống dòng & thụt lề** (cắt thụt lề chung).
 - Hỗ trợ **interpolation**: `$""" ... {expr} ... """`.
-- Để chèn dấu `{`/`}` *nguyên văn* trong chuỗi có nội suy, dùng **`{{`** hoặc **`}}`**, hoặc tăng số `$` (C# 11 `$$"""`).
+- Với raw interpolation, số `$` quyết định số dấu `{`/`}` mở/đóng hole. Dùng `$$"""` khi cần `{`/`}` nguyên văn; cách escape `{{` của chuỗi `$"..."` thường **không** áp dụng nguyên xi cho raw string.
 
 **Quy tắc indent (WHY tránh “thụt lề file nguồn lọt vào chuỗi”):**
 
@@ -231,10 +230,10 @@ var json = """
 // json bắt đầu bằng `{`, không có indent thừa từ source
 
 var who = "Bob";
-var greet = $"""
-Hello, {who}!
+var greet = $$"""
+Hello, {{who}}!
 This is a "raw" string with no escaping.
-{{This brace is literal}}.
+{This brace is literal}.
 """;
 ```
 
@@ -246,7 +245,7 @@ var embedded = """"
     """";
 ```
 
-Số `$` ≥ số `{` liên tiếp muốn coi là literal. `$$""" {x} {{x}} """` → `{x}` literal, hole `x`.
+Để một dãy `{` được coi là literal, số `$` phải **lớn hơn** số `{` trong dãy đó. `$$""" {x} {{x}} """` → `{x}` literal, hole `x`.
 
 **Pitfall:** `"""` đóng lệch cột → CS8997/8999 (indent). Trộn tab/space trong indent raw → lỗi. Raw **không** biến `""` thành `"` (đó là verbatim). JSON chứa `"""` hiếm — tăng quote count.
 
@@ -270,7 +269,7 @@ ReadOnlySpan<byte> bytes = "PING\r\n"u8;
 | Heap string | Không (span vào data) | Có intern/literal |
 | Gán `string s = "x"u8` | **Lỗi** | — |
 | Sống qua `async`/`return string` | Span không store field/`async` dễ dàng | OK |
-| `+` nối | Không như string | Có |
+| `+` nối | Có giữa các UTF-8 literal (`"a"u8 + "b"u8`), không phải phép nối span runtime | Có |
 
 ```csharp
 ReadOnlySpan<byte> ping = "PING\r\n"u8;
@@ -283,9 +282,9 @@ socket.Send(ping);
 byte[] owned = "PING\r\n"u8.ToArray(); // copy khi phải store
 ```
 
-**Pitfall lifetime:** `u8` span trỏ data tĩnh — an toàn hơn `stackalloc`. **Không** trả `Span` từ method rồi dùng sau khi “xong” nếu bạn `ToArray` không? Data literal sống cùng assembly — `return "ok"u8;` *có thể* hợp lệ vì payload tĩnh, nhưng kiểu trả `ReadOnlySpan<byte>` từ method public thường khó (ref struct). Public API: `ReadOnlyMemory<byte>` / `byte[]` / `Utf8String` pattern.
+**Lifetime:** `static ReadOnlySpan<byte> Ok() => "ok"u8;` hợp lệ vì payload literal có lifetime tĩnh. Dùng `ReadOnlyMemory<byte>` / `byte[]` khi cần lưu trong field hoặc qua `await`; `.ToArray()` tạo bản sao có ownership riêng.
 
-Interpolation UTF-8: `$"x={n}"u8` — handler UTF-8; format culture vẫn là mối quan tâm. Chỉ dùng khi hole format được thành UTF-8.
+**Nội dung động:** dùng `Encoding.UTF8.GetBytes(...)`, `Utf8.TryWrite` (.NET 8+), hoặc `IBufferWriter<byte>`; không thêm `u8` vào chuỗi nội suy. `Utf8.TryWrite(destination, $"x={n}", out int written)` ghi vào `Span<byte>` và báo `false` nếu buffer thiếu chỗ.
 
 So sánh protocol:
 
@@ -349,7 +348,7 @@ const string AppName = "MyApp";
 const decimal Vat = 0.10M;
 ```
 
-- **Interpolated const string (C# 10+)**: cho phép nếu **mọi thành phần là hằng**.
+- **Interpolated const string (C# 10+)**: mọi hole phải là hằng `string`, không kèm alignment/format. `const string X = $"{42}";` không hợp lệ.
 
 ```csharp
 const string Vendor = "ACME";

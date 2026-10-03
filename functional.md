@@ -121,7 +121,7 @@ b.Items.Add(2);              // a.Items cũng có 2
 
 Sửa: `ImmutableArray<int>` / `ImmutableList<int>`, hoặc copy trong `with` (`Items = Items.ToList()` vẫn mutable — chỉ hết alias nếu không ai giữ list cũ). Đừng nhét `List<T>` vào `record` rồi coi là bất biến.
 
-`with` không gọi constructor nếu bạn không viết copy constructor. Validation nằm trong ctor **không** chạy lại trên `with` trừ khi bạn định nghĩa copy constructor. Invariant “amount ≥ 0” phải ở một hàm `WithAmount` tự kiểm, không chỉ ctor.
+Với record class, `with` gọi cơ chế clone/copy constructor rồi mới gán các member trong initializer; không gọi lại constructor thông thường. Copy constructor kiểm dữ liệu cũ nên **không bảo đảm** giá trị mới hợp lệ. Đặt validation trong init accessor hoặc hàm WithAmount chuyên dụng. Record struct sao chép giá trị.
 
 ### 3.2 Collection bất biến và view
 
@@ -131,7 +131,8 @@ Ba thứ khác nhau. Đừng đổi tên cho nhau.
 |---|---|---|---|
 | `List<T>` / mảng | tại chỗ | rẻ | rẻ |
 | `IReadOnlyList<T>` | API không cho; **gốc vẫn sửa được** nếu còn `List` | — | view |
-| `ImmutableList<T>` / `ImmutableArray<T>` | không | trả cấu trúc mới, chia sẻ nút | chậm hơn list thường khi tra nhiều |
+| `ImmutableList<T>` | không | cấu trúc cây mới, chia sẻ nút | index O(log n) |
+| `ImmutableArray<T>` | không | thay đổi thường tạo/copy mảng mới | index O(1) |
 | `FrozenDictionary` / `FrozenSet` | không | không có cập nhật từng phần — xây lại | rất nhanh sau khi xây |
 
 Persistent collection (`Immutable*`): `Add` không sửa bản cũ. Nhiều lần `Add` đơn lẻ trên `ImmutableList` đắt — dùng `ToBuilder()`, sửa builder, `ToImmutable()` một lần. Package và semantics: [collections-generics.md §3](collections-generics.md#3-collections-bất-biến-systemcollectionsimmutable).
@@ -153,7 +154,7 @@ Collection expression `[1, 2, 3]` **không** bất biến theo mặc định. Ki
 
 ## 4. Hàm là giá trị
 
-`Func<T, TResult>` là hàm một đối số trả giá trị. `Action<T>` trả `void` — gần như luôn là side effect; lõi thuần ưu tiên `Func`. `Predicate<T>` là `Func<T, bool>` cũ hơn; API mới dùng `Func<T, bool>`.
+Func<T,TResult> nhận đối số và trả giá trị; Action<T> trả void. Predicate<T> có cùng chữ ký với Func<T,bool> nhưng là **delegate type khác**, không có implicit conversion giữa hai instance; có thể bọc lời gọi trong lambda.
 
 ```csharp
 Func<int, int> square = static x => x * x;
@@ -274,7 +275,7 @@ static decimal Discount(Money m) => m switch
 };
 ```
 
-Nhánh `_` nuốt currency lạ. Nếu tập currency đóng, kiểu đó phải là enum hoặc union/`closed`, không phải `string`, thì bỏ `_` và để compiler báo khi thêm case. Pattern và exhaustiveness: [statements.md §6](statements.md#6-selection-statements-ifelse-switch).
+Nhánh `_` có thể che currency lạ. Union/closed giúp compiler xét tập case; enum vẫn có giá trị không đặt tên (do cast/deserialize), nên xử lý giá trị ngoài danh sách. Switch expression thiếu case thường phát warning, không tự bảo đảm build fail. [Patterns](statements.md#6-selection-statements-ifelse-switch).
 
 ---
 
@@ -312,11 +313,15 @@ public readonly record struct Result<T>
     }
 
     public static Result<T> Ok(T value) => new(value, null, true);
-    public static Result<T> Fail(string error) => new(default!, error, false);
+    public static Result<T> Fail(string error)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(error);
+        return new(default!, error, false);
+    }
 
     public T OrThrow() => IsOk
         ? _value
-        : throw new InvalidOperationException(Error);
+        : throw new InvalidOperationException(Error ?? "Result chưa được khởi tạo.");
 }
 
 static Result<int> ParsePort(string text) =>
@@ -325,7 +330,7 @@ static Result<int> ParsePort(string text) =>
         : Result<int>.Fail("port");
 ```
 
-`readonly record struct` tránh cấp phát cho lỗi thường gặp. `default!` trong `Fail` **không** được đọc khi `IsOk` đúng — `OrThrow` là cửa. Đừng public `_value` khi fail. Struct này **không** exhaustiveness: quên `if (IsOk)` vẫn biên dịch. Đó là giới hạn .NET 10.
+Readonly record struct tránh allocation object khi không boxing. `_value = default!` trong Fail không được đọc **khi IsOk là false**; dùng OrThrow làm cửa truy cập. `default(Result<T>)` cũng có IsOk=false nhưng Error=null: cần quy ước rõ trạng thái chưa khởi tạo hoặc dùng class nếu phải cấm nó. Không có exhaustiveness cho struct này.
 
 Đừng bọc `Result` bằng exception (“Fail thì ném”) rồi bắt ngay ở caller — mất chữ ký. Đừng `Result<Result<T>>` trừ khi hai lớp lỗi thật sự khác nhau.
 
@@ -371,7 +376,7 @@ Query syntax `from` thứ hai **là** `SelectMany`, không phải `Select`. [lin
 
 | | `IEnumerable` / iterator | `Task` |
 |---|---|---|
-| Lúc tạo | lạnh — chưa chạy đến khi duyệt | nóng — `Task.Run` / async method đã chạy |
+| Lúc tạo | iterator chưa chạy tới khi duyệt; source khác tùy implementation | Task.Run đã schedule, async method bắt đầu ngay; new Task(delegate) chưa Start thì chưa chạy |
 | Lần hai | chạy lại (deferred) | cùng một việc đã lên lịch |
 | “Bind” | `SelectMany` | `await` (và `ContinueWith`, tránh nếu có `await`) |
 
@@ -407,7 +412,7 @@ static int Fact(int n, int acc = 1) =>
 
 Dãy dài: vòng hoặc `Aggregate`, không đệ quy. Cây AST độ sâu người viết: đệ quy ổn. Parser trên input độc hại: đệ quy là đường DoS — giới hạn độ sâu hoặc dùng stack tường minh.
 
-`Span<T>` không nằm trong `Func<Span<T>, …>` theo cách thoải mái: `Span` là `ref struct`, không được capture vào lambda không `static` theo các luật lifetime. Hot path bất biến kiểu hàm thường dừng ở `ReadOnlySpan` + `foreach`, không pipeline `IEnumerable`. [memory-spans.md](memory-spans.md).
+Baseline .NET 10 cho phép `Func<Span<T>, TResult>` nhờ `allows ref struct` trên delegate BCL. Lambda có thể nhận Span qua tham số, nhưng **không được capture Span local**, dù static hay không. Span không trở thành IEnumerable chỉ nhờ dùng delegate. [Lifetime](memory-spans.md).
 
 ---
 
@@ -416,12 +421,13 @@ Dãy dài: vòng hoặc `Aggregate`, không đệ quy. Cây AST độ sâu ngư�
 Bản đã xây xong và **không còn đường sửa** thì nhiều thread đọc không cần `lock` trên từng phần tử. Việc cần hàng rào là **công bố tham chiếu**: thread khác phải thấy object hoàn chỉnh, không thấy nửa khởi tạo.
 
 ```csharp
-volatile ImmutableArray<int> _published;
+private ImmutableList<int> _published = ImmutableList<int>.Empty;
 
-void Publish(ImmutableArray<int> next) => _published = next; // ghi tham chiếu
+void Publish(ImmutableList<int> next) => Volatile.Write(ref _published, next);
+ImmutableList<int> Snapshot() => Volatile.Read(ref _published);
 ```
 
-`ImmutableArray` là struct bọc mảng; bản thân struct gán là copy của wrapper. Mảng bên trong không sửa qua API. Đừng giữ lại `ImmutableArray<T>.Builder` và đưa cho thread khác.
+Mẫu dùng ImmutableList là reference type để publish bằng Volatile. **Không khai báo `volatile ImmutableArray<T>`**: compiler cấm vì đó là struct. Với ImmutableArray, dùng lock, wrapper reference hoặc ImmutableInterlocked phù hợp. Bất biến collection là nông: element mutable vẫn cần đồng bộ. Builder không tự thread-safe.
 
 `FrozenDictionary` sau `ToFrozenDictionary()` cùng luật: xây trên một thread, công bố, rồi chỉ đọc. [collections-generics.md §4.2](collections-generics.md#42-frozen-systemcollectionsfrozen).
 

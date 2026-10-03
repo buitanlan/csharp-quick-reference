@@ -287,7 +287,7 @@ Console.WriteLine(a.Name);          // "X" — alias biến a
 **Safe context** là vùng code:
 
 - Không dùng con trỏ (`*`, `&` trên kiểu pointer, `T*`, `void*`),
-- Không thao tác trực tiếp vùng nhớ unmanaged,
+- Không tự dereference con trỏ unmanaged; vẫn có thể dùng API an toàn như Span được thư viện xây trên native memory, với lifetime do owner quản lý,
 - Là chế độ mặc định của C#.
 
 Dù dùng `ref`, `out`, `in`, `ref readonly` thì:
@@ -324,7 +324,7 @@ Các **parameter modifier** quyết định **cách truyền** tham số:
 | `ref` | ✅ | ✅ | **Có** | Không | alias đọc/ghi |
 | `out` | sau khi gán | ✅ | Không | **Có** (mọi path) | output / `TryXxx` |
 | `in` | ✅ | ❌ | Có (hoặc temporary) | Không | by-ref readonly (tham số) |
-| `ref readonly` | ✅ | ❌ | Có | Không | thường cho **ref return/local**; tham số dùng `in` phổ biến hơn |
+| `ref readonly` | ✅ | ❌ | Khuyến khích biến; temporary có thể phát warning | Không | ref local/return và tham số C# 12+ |
 | `params` | ✅ | — | — | — | varargs; C# 13+: nhiều kiểu collection |
 | `this` | — | — | — | — | chỉ tham số đầu — classic extension method |
 
@@ -515,7 +515,7 @@ So sánh:
 - `ref readonly` → tham chiếu **chỉ-đọc**.
 - `in`           → dành cho **tham số** (by-ref readonly parameter).
 
-**`ref readonly` trên tham số (C# 12+):** hợp lệ nhưng hiếm — gần `in`, khác ở *caller phải có biến* (ít temporary hơn). Đa số thư viện vẫn dùng `in` cho tham số.
+**`ref readonly` trên tham số (C# 12+):** khuyến khích caller truyền biến bằng `in` hoặc `ref`. Bỏ modifier hay truyền temporary có thể biên dịch với warning CS9192/CS9193, không phải luôn là error. Nếu bật warnings-as-errors thì các warning đó làm build fail.
 
 ```csharp
 static int Norm(ref readonly Matrix4x4 m) => 0;
@@ -950,9 +950,24 @@ Khi `foreach` kết thúc (dù bình thường hay exception), enumerator đư�
 
 ### 13.8 Pitfalls iterator & so sánh với async streams
 
-- **Không** `yield` trong `try` có `catch` (được `try/finally`).  
+Validation trong thân iterator cũng bị deferred. Nếu muốn báo argument sai **ngay lúc gọi**, kiểm tra trong wrapper thông thường rồi trả local iterator:
+
+```csharp
+static IEnumerable<int> RepeatChecked(int value, int count)
+{
+    ArgumentOutOfRangeException.ThrowIfNegative(count);
+    return Iterate();
+
+    IEnumerable<int> Iterate()
+    {
+        for (int i = 0; i < count; i++) yield return value;
+    }
+}
+```
+
+- **Không yield return** trong catch, finally hoặc try có catch; try/finally được phép. Yield break có thể dùng trong catch/try có catch nhưng không trong finally.
 - `ref`/`Span` không sống qua `yield return` (C# 13: dùng được `ref struct` *ngoài* đoạn có `yield`).  
-- Iterator **không** phải `async`. Sequence bất đồng bộ: `IAsyncEnumerable<T>` + `await foreach` — [async.md](async.md).  
+- Iterator đồng bộ không dùng async; **async iterator** kết hợp async + yield và trả IAsyncEnumerable<T>/IAsyncEnumerator<T>. [Async streams](async.md).
 - `ValueTask` / `Task` **không** thuộc chương này: method trả `Task` không dùng `yield` theo nghĩa iterator CLR. Trả sequence sync → `IEnumerable` + `yield`; I/O từng phần tử → async streams.
 
 ```csharp

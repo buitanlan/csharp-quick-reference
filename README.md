@@ -9,7 +9,13 @@ Không phải giáo trình nhập môn: giả định đã biết class/method/`
 > **Baseline:** .NET **10** / C# **14** (GA 11/2025, hỗ trợ đến **14/11/2028**) — mặc định `net10.0`, `LangVersion` 14.  
 > Mục ghi **C# 15 / .NET 11** theo **RC1** (08/09/2026, giấy phép **go-live**; GA dự kiến ~11/2026). Trên `net11.0`, C# 15 là ngôn ngữ **mặc định** — union, `closed`, extension indexer, `with(...)`, labeled `break`/`continue`, static non-virtual trên interface **không** cần `<LangVersion>preview</LangVersion>`. Baseline dài hạn của repo vẫn là **net10.0**. **Unsafe Evolution** (memory safety mới) vẫn là preview riêng, không đi theo C# 15 mặc định.
 
-Chu kỳ hỗ trợ: LTS ~ 3 năm; xen kẽ STS. .NET 8/9 EOS ~ cùng cửa sổ GA .NET 11 (**~10/11/2026**). Production dài hạn: **net10.0** → C# 14 mặc định. Checklist nâng cấp: [projects-packages.md](projects-packages.md). Entry/`Main`/TLS/`args`: [main-function.md](main-function.md).
+**Rà soát ngày 03/10/2026.** LTS được hỗ trợ 3 năm, STS 2 năm; .NET 8 và 9 hết hỗ trợ **10/11/2026**. .NET 11 RC1 vẫn là prerelease dù có go-live. [Chính sách hỗ trợ .NET](https://dotnet.microsoft.com/en-us/platform/support/policy). Baseline dài hạn: net10.0/C# 14. [Checklist nâng cấp](projects-packages.md), [entry/Main](main-function.md).
+
+## Quy ước ví dụ và kiểm tra tài liệu
+
+Ví dụ thường là **đoạn minh họa theo ngữ cảnh**, không phải mỗi code block là một chương trình độc lập. Các tên như db, logger, source, ProcessAsync cần implementation của ứng dụng; thêm namespace/package và đặt declaration trong type/method phù hợp. Với top-level statements, đặt statement trước type declaration hoặc tách file. Đoạn ghi “SAI”, “lỗi” hoặc diagnostics minh họa lỗi có chủ đích.
+
+Chạy `node scripts/check-docs.mjs` từ repo để kiểm tra file/anchor nội bộ, code fence và ký tự lỗi encoding; script không biên dịch các snippet hoặc kiểm tra URL ngoài. Các quy tắc compiler/runtime được rà soát với SDK .NET 10; phần C# 15/.NET 11 đối chiếu release notes và đặc tả, cần SDK 11 tương ứng để chạy. [Release notes C# RC1](https://github.com/dotnet/core/blob/main/release-notes/11.0/preview/rc1/csharp.md).
 
 ---
 
@@ -22,6 +28,8 @@ Tham khảo: [Khóa học .NET nền tảng](https://github.com/daohainam/lets-l
 - [Hàm Main & entry](main-function.md)
 - [Project, SDK & NuGet](projects-packages.md)
 - [Hệ thống kiểu dữ liệu](typesystem.md)
+- [Attributes & Reflection](attributes-reflection.md)
+- [System.Text.Json](system-text-json.md)
 - [Memory, Span & unsafe](memory-spans.md)
 - [Chỉ thị tiền biên dịch](preprocessor-directives.md)
 - [Literal](literals.md)

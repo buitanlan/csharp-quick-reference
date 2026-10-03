@@ -166,7 +166,7 @@ dict["k"] = 1;
 dict.TryAdd("k", 2);                 // false, không ghi đè
 ```
 
-**Pitfall:** `dict[missing]` ném `KeyNotFoundException`. Mutable key (`List<int>` làm key) = bug. Không thread-safe: đọc song song khi có ghi → undefined (có thể corrupt).
+**Pitfall:** `dict[missing]` ném `KeyNotFoundException`. Key bị sửa **những field tham gia Equals/GetHashCode** có thể không tìm lại được. `List<int>` dùng equality theo identity mặc định nên sửa phần tử không đổi hash; comparer theo nội dung lại có nguy cơ này. Đọc song song với ghi cần khóa hoặc ConcurrentDictionary.
 
 **Vì sao / Khi nào dùng:** lookup 1 thread / “ghi rồi đọc” trên cùng thread. Nhiều thread ghi → Concurrent hoặc lock. Data cố định sau startup → Frozen.
 
@@ -206,7 +206,7 @@ a.IntersectWith(b); // a = {3}
 
 ## 3. Collections bất biến (`System.Collections.Immutable`)
 
-> **Lưu ý**: `System.Collections.Immutable` là một thư viện riêng, cần cài đặt NuGet package `System.Collections.Immutable` để sử dụng. (Nhiều SDK hiện đại đã kéo transitive.)
+> **Baseline net10.0:** `System.Collections.Immutable` có sẵn trong shared framework/reference pack, không cần thêm NuGet chỉ để dùng namespace. Target cũ hoặc cần phiên bản thư viện khác thì kiểm tra package tương ứng.
 
 - `ImmutableList<T>`, `ImmutableDictionary<TKey,TValue>`, `ImmutableHashSet<T>`…  
 - **Mọi thao tác sinh cấu trúc mới**; bên trong dùng **persistent data structure** để chia sẻ nút → tiết kiệm bộ nhớ so với copy thô.
@@ -240,10 +240,10 @@ Ba họ giải **ba bài toán khác nhau** — không thay thế nhau.
 ### 4.1 Collections đồng thời (thread-safe)
 
 - `ConcurrentDictionary<TKey,TValue>`: tra cứu an toàn, API `GetOrAdd`, `AddOrUpdate`.
-- `ConcurrentQueue<T>`, `ConcurrentStack<T>`, `ConcurrentBag<T>`: hàng đợi/ngăn xếp/túi thread-safe (không có thứ tự mạnh).
+- `ConcurrentQueue<T>` giữ FIFO; `ConcurrentStack<T>` giữ LIFO; `ConcurrentBag<T>` không bảo đảm thứ tự. Lịch chạy thread và thứ tự hoàn thành xử lý vẫn có thể khác thứ tự lấy phần tử.
 - `BlockingCollection<T>`: bọc trên concurrent collection với **bounded capacity** & blocking producers/consumers.
-- `System.Threading.Channels` (thư viện riêng): **channel** tốc độ cao (producer/consumer) — tốt cho I/O pipeline.
-- **`PriorityQueue<TElement,TPriority>`** (.NET 6+): heap; không phải `IEnumerable` đầy đủ như `Queue<T>`. **Không** thread-safe.
+- `System.Threading.Channels` (có sẵn trên net10.0): channel cho producer/consumer async — tốt cho I/O pipeline.
+- **`PriorityQueue<TElement,TPriority>`** (.NET 6+): min-heap, ưu tiên nhỏ nhất được lấy trước theo comparer; cùng priority không bảo đảm FIFO. Duyệt bằng `UnorderedItems`, không theo thứ tự ưu tiên. Không thread-safe.
 
 ```csharp
 var cd = new ConcurrentDictionary<string,int>();
@@ -317,7 +317,7 @@ FrozenDictionary<string, string> published = building.ToFrozenDictionary(StringC
 
 ## 5. Readonly & View: `ReadOnlyCollection<T>`, `IReadOnlyList<T>`…
 
-- **`ReadOnlyCollection<T>`**: *view* bất biến **trên** một `IList<T>` hiện hữu (thay đổi ở gốc sẽ **phản ánh** vào view).  
+- ReadOnlyCollection<T> là **view chỉ đọc**, không phải immutable snapshot: thay đổi IList gốc vẫn phản ánh vào view.
 - **Interface `IReadOnlyList<T>`/`IReadOnlyDictionary<TKey,TValue>`**: hợp đồng chỉ-đọc; trả về từ API để **giấu** implement thật.
 
 ```csharp
@@ -380,7 +380,7 @@ IEnumerable<int> xs = [1, 2, 3]; // thường thành mảng rồi wrap
 HashSet<int> set = [1, 1, 2];    // 2 phần tử — HashSet loại trùng
 ```
 
-**Pitfall:** `var x = [1, 2, 3]` — C# 12+ suy `int[]` trong nhiều ngữ cảnh; không đoán `List`. Overload `void F(List<int> a)` vs `void F(int[] a)` + `F([1,2])` → resolution có thể đổi giữa phiên bản — test kỹ. Collection expression vào `Span` rồi return ra ngoài = lỗi lifetime.
+**Pitfall:** `var x = [1, 2, 3]` không biên dịch (CS9176): collection expression cần target type, ví dụ `int[] x = [1, 2, 3]`. Overload nhận List và array có thể gây ambiguity; dùng target type tường minh khi cần. Span chứa stack/local storage không được escape; một số ReadOnlySpan từ literal hằng có thể dùng static storage và trả về hợp lệ.
 
 **Vì sao / Khi nào dùng:** khởi tạo ngắn, test, merge `[..a, ..b]`. Hot-path biết capacity → `new List<T>(n)` hoặc C# 15 `with(capacity:…)`.
 
@@ -431,7 +431,7 @@ var set = new HashSet<Person>(new PersonIdComparer());
 
 **Tuples/records**: đã có equality/hashing theo giá trị; tận dụng cho key phức tạp: `Dictionary<(int,int),TValue>`.
 
-**Pitfall:** override `Equals` mà quên `GetHashCode` → Dictionary “mất” key. Comparer **phải** ổn định: `StringComparer.CurrentCulture` đổi theo thread culture → đừng làm key comparer. Chi tiết cặp Equals/GetHashCode: [oop.md §4](oop.md#4-equality--tostring).
+**Pitfall:** Equals và GetHashCode phải nhất quán, ổn định suốt thời gian key nằm trong collection. `StringComparer.CurrentCulture` chụp culture lúc tạo comparer, không tự đổi theo thread về sau. Key kỹ thuật thường nên dùng Ordinal/OrdinalIgnoreCase; comparer tự đọc CurrentCulture mỗi lần có thể phá tính ổn định. [Equality](oop.md#4-equality--tostring).
 
 **Vì sao / Khi nào dùng comparer ngoài type:** cùng `Person` lúc thì so Id, lúc thì so Email — không nhúng một `Equals` duy nhất.
 
@@ -477,6 +477,8 @@ public interface IRepository<T> where T : class
 ### 10.2 Phương sai (variance): `out`/`in` — PECS
 
 - **Covariant `out`**: cho **output-only**. Ví dụ `IEnumerable<out T>` → `IEnumerable<string>` nạp vào nơi cần `IEnumerable<object>`.
+
+Variance conversion chỉ áp dụng cho reference type: `IEnumerable<int>` không chuyển thành `IEnumerable<object>`; `Cast<object>()` tạo pipeline có boxing.
 - **Contravariant `in`**: cho **input-only**. Ví dụ `IComparer<in T>` có thể so sánh `object` cho `string`.
 
 ```csharp

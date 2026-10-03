@@ -136,7 +136,7 @@ public sealed class Connection : IDisposable
 2. **Message tùy biến:** helper message chuẩn BCL. Cần câu nghiệp vụ → `throw new ArgumentOutOfRangeException(nameof(x), x, "must be even")`.
 3. **Không** dùng `ThrowIf*` trong vòng hot *kỳ vọng fail* (parse từng dòng log) — `Try*` / `if`.
 4. Expression trees / một số source-gen cần `throw new` tường minh — hiếm.
-5. `ThrowIfNull(arg)` sau khi đã dùng `arg!` — thừa; đặt **đầu method**.
+5. `arg!` chỉ tắt cảnh báo nullable, không kiểm tra runtime. Đặt `ThrowIfNull(arg)` **đầu method**, trước khi dereference.
 
 `Debug.Assert` **không** thay guard production (bị strip Release — [preprocessor-directives.md §5](preprocessor-directives.md#5-conditionalattribute-vs-preprocessor)).
 
@@ -159,7 +159,9 @@ public void Withdraw(decimal amount)
 }
 ```
 
-`ThrowIfNull<T>(T? arg)` generic class constraint — NRT: sau lời gọi, `arg` được xem non-null (`[NotNull]`). Giúp flow analysis, không phải phép màu runtime (vẫn NRE nếu caller tắt NRT và truyền null qua reflection).
+Overload thông dụng là `ThrowIfNull(object? argument, string? paramName = null)`, với `[NotNull]` giúp flow analysis. Khi nhận null nó ném `ArgumentNullException` ở runtime, kể cả caller tắt NRT hoặc gọi qua reflection.
+
+Để compiler hiểu guard/Try-pattern tự viết, dùng nullable flow attributes như `[NotNullWhen]`, `[MemberNotNull]`; xem [hệ thống kiểu: annotation attributes](typesystem.md#101-annotation-attributes). Attributes mô tả hợp đồng; phần kiểm tra và ném lỗi vẫn nằm trong implementation.
 
 ---
 
@@ -180,11 +182,11 @@ System.Object
    │  ├─ OverflowException
    │  ├─ DivideByZeroException
    │  ├─ TimeoutException
+   │  ├─ System.IO.IOException (và các ngoại lệ con)
+   │  ├─ System.OperationCanceledException
+   │  │  └─ System.Threading.Tasks.TaskCanceledException
    │  └─ ...
-   ├─ System.IO.IOException (và các ngoại lệ con)
    ├─ System.Net.Http.HttpRequestException
-   ├─ System.Threading.Tasks.TaskCanceledException
-   ├─ System.OperationCanceledException
    └─ (ngoại lệ tuỳ miền / thư viện khác)
 ```
 
@@ -236,7 +238,7 @@ catch
 }
 ```
 
-Hãy **ít nhất log** hoặc chuyển sang trạng thái an toàn. `catch { }` còn nuốt `OutOfMemoryException` / `StackOverflowException` (một số không bắt được) và **OCE** — hủy bị nuốt thành “thành công”.
+Hãy log hoặc chuyển sang trạng thái an toàn. `catch { }` có thể nuốt `OutOfMemoryException` và **OCE**, biến hủy thành “thành công”. `StackOverflowException` do tràn stack thường kết thúc process và không thể xử lý bằng `catch` thông thường.
 
 ---
 
@@ -357,7 +359,7 @@ catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyReq
 
 **Pitfall `when`:**
 
-1. **Exception trong `when`:** filter ném → che exception gốc (hành vi CLR). `when` phải **thuần**, không I/O, không null-deref.
+1. **Exception trong `when`:** CLR bỏ qua lỗi của filter và coi filter là `false`; tiếp tục tìm handler cho exception **gốc**. Vẫn tránh I/O, side effect và null-dereference trong filter.
 2. **Gọi method nặng** trong `when` — chạy trên đường exception (hiếm nhưng đắt).
 3. **`when (ex is ...)`** lặp type đã có trên `catch`.
 4. Bắt OCE bằng filter token: `catch (OperationCanceledException) when (ct.IsCancellationRequested)` — §11.
@@ -430,7 +432,7 @@ var rows = await conn.QueryAsync(...);
 
 > Xem thêm: mẫu *Dispose pattern* với resource unmanaged (nếu cần). So sánh declaration vs statement: [statements.md §9](statements.md#92-using-statement-vs-using-declaration).
 
-Dispose trong `finally` ném **che** exception gốc (`ExceptionDispatchInfo` / `AggregateException` tùy runtime). Tránh `throw` trong `Dispose` nếu có thể.
+Dispose trong `finally` ném có thể che exception gốc; runtime không tự gộp hai lỗi thành `AggregateException`. Nếu cần giữ cả hai, ứng dụng phải xử lý tường minh. Tránh ném trong `Dispose` nếu có thể.
 
 ---
 
@@ -445,19 +447,15 @@ Dispose trong `finally` ném **che** exception gốc (`ExceptionDispatchInfo` / 
 - Đặt hậu tố `Exception`, có ctor chuẩn.
 
 ```csharp
-[Serializable]
 public class ConfigurationException : Exception
 {
     public ConfigurationException() { }
     public ConfigurationException(string message) : base(message) { }
     public ConfigurationException(string message, Exception inner) : base(message, inner) { }
-    protected ConfigurationException(
-      System.Runtime.Serialization.SerializationInfo info,
-      System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
 }
 ```
 
-> Với .NET hiện đại, `[Serializable]`/ctor serialization chỉ cần nếu bạn thật sự cần cross-appdomain/interop cũ.
+> Baseline .NET 10 không cần `[Serializable]` hoặc ctor serialization kiểu formatter; API này đã obsolete. Dùng định dạng dữ liệu tường minh nếu cần truyền lỗi qua process/network.
 
 ---
 
@@ -465,7 +463,7 @@ public class ConfigurationException : Exception
 
 ### 10.1 `await` *unwrap* ngoại lệ
 
-`Task` faulted lưu exception trong `Task.Exception` kiểu **`AggregateException`**. `await` **không** ném wrapper đó — gọi `GetResult()` / EDI → ném **inner đầu tiên** (exception gốc).
+Task faulted lưu lỗi trong Task.Exception (AggregateException). Await/GetResult ném một exception gốc thay vì wrapper TPL. Nếu operation **tự ném AggregateException**, đó chính là lỗi gốc và await vẫn ném AggregateException; không unwrap đệ quy mọi lớp.
 
 ```csharp
 try
@@ -478,7 +476,7 @@ catch (InvalidOperationException ex)
 }
 catch (Exception ex)
 {
-    Console.WriteLine(ex is AggregateException); // false với await một Task
+    Console.WriteLine(ex is AggregateException); // có thể true nếu operation tự ném AggregateException
 }
 ```
 
@@ -520,7 +518,7 @@ try
 }
 catch
 {
-    // một hay nhiều task lỗi → Exception từ task đầu tiên; có thể duyệt tasks để lấy tất cả
+    // await ném một lỗi; không dựa vào thứ tự task nào cung cấp lỗi đó
     var faults = tasks.Where(t => t.IsFaulted).Select(t => t.Exception).ToList();
 }
 ```

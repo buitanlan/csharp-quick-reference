@@ -42,7 +42,7 @@
     - [9.1 `try` / `catch` / `finally` + filter `when`](#91-try--catch--finally--filter-when)
     - [9.2 `using` statement vs `using` declaration](#92-using-statement-vs-using-declaration)
     - [9.3 `using` vs `await using` — semantics \& pitfalls](#93-using-vs-await-using--semantics--pitfalls)
-  - [10. Đồng bộ hoá: `lock` (con trỏ `System.Threading.Lock`)](#10-đồng-bộ-hoá-lock-con-trỏ-systemthreadinglock)
+  - [10. Đồng bộ hoá: `lock` với `System.Threading.Lock`](#10-đồng-bộ-hoá-lock-với-systemthreadinglock)
   - [11. Kiểm soát tràn \& môi trường: `checked`/`unchecked`, `unsafe`/`fixed`](#11-kiểm-soát-tràn--môi-trường-checkedunchecked-unsafefixed)
   - [12. Local functions](#12-local-functions)
   - [13. Empty \& labeled statements](#13-empty--labeled-statements)
@@ -117,7 +117,7 @@ int x = 1;
 // x2 không còn ở đây
 ```
 
-- **Shadowing**: có thể trùng tên ở scope trong (nên tránh vì giảm rõ ràng).
+- Local/parameter ở scope bao ngoài **không được khai báo lại cùng tên** trong scope con (CS0136). Local có thể che field; dùng `this.field` để phân biệt. Hai scope anh em không lồng nhau có thể dùng lại tên local.
 - `using` declaration (mục 4.5) gắn Dispose với **scope hiện tại** — thêm `{ }` chỉ để rút ngắn lifetime tài nguyên là pattern hợp lệ.
 
 ```csharp
@@ -205,7 +205,7 @@ await Task.Delay(100);
 
 > **`throw`** cũng là statement (và từ C# 7 có dạng *throw expression* trong toán tử `?:`/`??`).
 
-Expression *không* tự thành statement nếu chỉ là giá trị (`x + 1;` cảnh báo CS0201). Phải có side-effect (gọi, gán, `await`, `++`).
+Expression không tự thành statement nếu chỉ là giá trị (`x + 1;` là **error CS0201**). Chỉ các dạng được ngôn ngữ cho phép như gọi method, tạo object, gán, await, ++/-- mới là expression statement; method call có thể hoàn toàn thuần.
 
 ---
 
@@ -249,7 +249,7 @@ if (node is not null and not ErrorNode)
     Visit(node);
 ```
 
-**Pitfall:** `if (x is int i)` — `i` có scope xuyên sang `else` nhưng **không assigned** ở nhánh else; dùng `i` ở else là lỗi. `is not null` trên nullable value type khác `HasValue` khi so sánh boxing — ưu tiên pattern trên `T?`.
+**Pitfall:** `if (x is int i)` — i có scope sang else nhưng chưa definitely assigned ở nhánh đó. Với Nullable<T>, `x is not null` có cùng phép kiểm có giá trị như `x.HasValue`, không cần boxing.
 
 Điều kiện `if` phải là `bool` (không truthy như JS). Type có `true`/`false` operator mới dùng trực tiếp trong `if`.
 
@@ -310,7 +310,7 @@ switch (x)
 
 - Không có fall-through *ngầm* giữa case (phải `goto case` / `goto default` nếu muốn). Mỗi case kết thúc bằng `break`, `return`, `throw`, `continue` (trong vòng), hoặc `goto`.
 - `goto case` chỉ với **hằng compile-time** (không pattern phức tạp).
-- Switch expression: thứ tự arm **từ trên xuống**; `_` bắt buộc nếu compiler chưa chứng minh hết case (warning/error tùy context).
+- Switch expression xét arm từ trên xuống. Thiếu case thường là warning; build vẫn có thể thành công nếu không bật warnings-as-errors. Giá trị không match arm gây SwitchExpressionException ở runtime; thêm `_` nếu cần fallback.
 - Statement `switch` trên `enum` không bắt buộc `default` nhưng thiếu `default` + giá trị ngoài enum (cast) sẽ rơi khỏi switch **im lặng**.
 
 **Khi nào expression vs statement:**
@@ -451,12 +451,12 @@ int Sum(ReadOnlySpan<int> s)
 
 Trên mảng, `foreach` và `for` gần như tương đương sau JIT; đừng micro-optimize trước khi đo. Ưu tiên **ý đồ**.
 
-**Enumerator `IDisposable`:** `foreach` trên `File.ReadLines` / `BlockingCollection.GetConsumingEnumerable` / custom enumerator — `Dispose` lúc `break` **quan trọng** (đóng file, đánh dấu consumer xong). `for (int i = 0; i < list.Count; i++)` **không** gọi enumerator Dispose — không thay `foreach` trên consuming enumerable.
+**Enumerator IDisposable:** foreach dispose enumerator khi break, return hoặc lỗi; File.ReadLines nhờ đó đóng file. Với BlockingCollection, dispose enumerator **không** CompleteAdding hoặc dừng producer; producer phải hoàn tất/hủy qua contract riêng. Vòng for theo index không thay được consuming enumerable.
 
 ```csharp
 foreach (var job in queue.GetConsumingEnumerable(ct))
 {
-    if (job.Done) break; // Dispose enumerator → CompleteAdding phía consumer dừng Take
+    if (job.Done) break; // chỉ dừng consumer này; không gọi CompleteAdding
     Process(job);
 }
 ```
@@ -595,7 +595,7 @@ public static IEnumerable<int> Evens(int from, int count)
 }
 ```
 
-Compiler sinh state machine (giống tinh thần async). **Lazy:** thân method chạy khi caller `MoveNext`. Không `yield` trong `try` kèm `catch` (được `try`/`finally`). Không `yield` + `async` trong cùng method — dùng `IAsyncEnumerable` + `await` + `yield` (async iterator). Chi tiết: [methods.md §13](methods.md).
+Compiler sinh state machine; thân iterator chạy khi MoveNext. Yield return không được trong catch/finally hoặc try kèm catch, nhưng try/finally được. Có thể kết hợp async + await + yield trong async iterator trả IAsyncEnumerable/IAsyncEnumerator. [Iterator](methods.md#13-iterator-method--yield-return--yield-break).
 
 ---
 
@@ -624,7 +624,7 @@ finally
 }
 ```
 
-Filter `when` **không** unwind stack nếu không khớp (hữu ích cho logging/telemetry). Chi tiết: [exceptions.md §6](exceptions.md#6-exception-filter-với-when).
+Filter `when` **không** unwind stack nếu không khớp (hữu ích cho logging/telemetry). Chi tiết: [exceptions.md §7](exceptions.md#7-exception-filter-với-when).
 
 ### 9.2 `using` statement vs `using` declaration
 
@@ -660,7 +660,7 @@ Nhiều `using` declaration: Dispose **ngược thứ tự khai báo** (như sta
 | Trong async method | Được | Được (và thường **nên** nếu type có async dispose) |
 | Trong sync method | Được | **Không** — không `await` được |
 
-Type cài **cả hai** (`Stream`, `HttpClient` không điển hình; nhiều ADO.NET/`Channel` writer): `await using` ưu tiên `DisposeAsync` (tránh sync-over-async trong Dispose). `using` đồng bộ gọi `Dispose()` — có thể block.
+Type cài cả hai gồm Stream và nhiều ADO.NET type như DbConnection/DbCommand. HttpClient chỉ có IDisposable; ChannelWriter không có IDisposable/IAsyncDisposable, phải hoàn tất bằng Complete/TryComplete. Await using gọi DisposeAsync, using gọi Dispose.
 
 ```csharp
 await using var conn = await OpenConnectionAsync(); // IAsyncDisposable
@@ -681,23 +681,32 @@ await using (var tx = await conn.BeginTransactionAsync())
 4. `using` trên struct `IDisposable` (custom ref-like) — copy enumerator/dispose sai nếu không hiểu boxing; hiếm trong app code.
 5. Không `return` resource đã `using` ra ngoài (dangling Dispose). Trả về thì **caller** `using`.
 
-**Cả `IDisposable` lẫn `IAsyncDisposable`:** spec: `await using` gọi `DisposeAsync` (không bắt buộc gọi `Dispose`). Implementer: `DisposeAsync` nên làm việc async; `Dispose` có thể `DisposeAsync().AsTask().GetAwaiter().GetResult()` — **sync-over-async**, tránh nếu bạn đang trên UI/pool. Ưu tiên `await using` trong async method.
+**Cả IDisposable lẫn IAsyncDisposable:** mỗi đường phải cleanup đầy đủ. Tránh implement Dispose bằng cách block chờ DisposeAsync vì có thể deadlock/starvation. Mẫu sau sở hữu Stream và tách flush đồng bộ/bất đồng bộ (giả định không dispose đồng thời từ nhiều thread):
 
 ```csharp
-public sealed class Pipe : IDisposable, IAsyncDisposable
+public sealed class Pipe(Stream stream) : IDisposable, IAsyncDisposable
 {
-    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult(); // last resort
+    private bool _disposed;
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { stream.Flush(); }
+        finally { stream.Dispose(); }
+    }
     public async ValueTask DisposeAsync()
     {
-        await FlushAsync();
-        _socket.Dispose();
+        if (_disposed) return;
+        _disposed = true;
+        try { await stream.FlushAsync().ConfigureAwait(false); }
+        finally { await stream.DisposeAsync().ConfigureAwait(false); }
     }
 }
 ```
 
 ---
 
-## 10. Đồng bộ hoá: `lock` (con trỏ `System.Threading.Lock`)
+## 10. Đồng bộ hoá: `lock` với `System.Threading.Lock`
 
 Đảm bảo **mutual exclusion** cho đoạn critical:
 
@@ -737,14 +746,15 @@ void Add(int value)
 ## 11. Kiểm soát tràn & môi trường: `checked`/`unchecked`, `unsafe`/`fixed`
 
 ```csharp
+int max = int.MaxValue;
 checked
 {
-    int c = int.MaxValue + 1; // ném OverflowException
+    int c = max + 1; // overflow runtime → OverflowException
 }
 
 unchecked
 {
-    int d = int.MaxValue + 1; // tràn im lặng
+    int d = max + 1; // tràn im lặng → int.MinValue
 }
 ```
 

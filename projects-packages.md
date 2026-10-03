@@ -91,7 +91,7 @@ Bảng TFM hay gặp (app 2026):
 |-----|---------|---------|
 | `net10.0` | .NET 10 LTS | **Baseline repo** |
 | `net11.0` | .NET 11 RC1 (go-live 09/2026) | C# 15 mặc định; GA ~11/2026 — chưa phải LTS của repo |
-| `net9.0` / `net8.0` | STS / LTS cũ | EOS ~11/2026 — đừng mở app mới |
+| `net9.0` / `net8.0` | STS / LTS cũ | EOS **10/11/2026**; lên kế hoạch nâng cấp |
 | `netstandard2.0` | Nhiều runtime | Thư viện legacy; API hẹp |
 | `net481` | .NET Framework | Windows; không phải Core |
 | `net10.0-windows` | .NET 10 + Windows | WinForms/WPF |
@@ -102,14 +102,14 @@ Bảng TFM hay gặp (app 2026):
 
 ```xml
 <LangVersion>14.0</LangVersion>
-<!-- net10.0: mặc định 14. net11.0 (SDK 11 RC+): mặc định 15. preview = Unsafe Evolution, không phải C# 15. -->
+<!-- net10.0: mặc định 14. net11.0 (SDK 11 RC+): mặc định 15. preview bật feature thử nghiệm của compiler. -->
 ```
 
 - SDK .NET 10 mặc định gắn **C# 14** với `net10.0` — **không cần** ghi `LangVersion` trừ khi hạ (compat).
 - SDK .NET 11 (từ **RC1**) mặc định gắn **C# 15** với `net11.0`. Union, `closed`, extension indexer, collection `with(...)`, labeled `break`/`continue`, static non-virtual trên interface dùng được **không** cần `preview`.
 - Hạ `LangVersion` ≠ hạ được API runtime: thiếu API BCL mới thì phải hạ **TFM** hoặc polyfill, không phải “đổi số ngôn ngữ”.
 - `latest` theo **SDK máy build**, không theo TFM — CI SDK 11 + `latest` có thể biên dịch C# 15 vào binary `net10.0` (union/`closed` cần runtime 11). Pin `14.0` trên nhánh `net10.0`.
-- `preview` **không** còn là cổng vào C# 15. Từ RC1 nó (cùng feature flag) chỉ bật **Unsafe Evolution**. Bảng feature: §14.
+- Preview chọn feature thử nghiệm mà compiler hỗ trợ; không đồng nghĩa một phiên bản cụ thể và không tự nâng TFM. C# 15 trên net11.0 RC1 không cần preview; Unsafe Evolution cần preview **và** feature flag riêng (§14).
 
 `global.json` pin **SDK** (compiler + targets), khác `LangVersion` (cờ compiler). Cả hai cần nhất quán trên CI.
 
@@ -123,9 +123,9 @@ Bảng TFM hay gặp (app 2026):
 }
 ```
 
-`allowPrerelease: true` trên máy dev dễ kéo SDK 11 RC → `latest` biên dịch C# 15 trên nhánh đang pin .NET 10. CI LTS: `false` + version 10.x. `rollForward: latestFeature` = 10.0.x mới; `latestMajor` có thể nhảy 11 khi GA — thường **không** muốn trên LTS pin.
+AllowPrerelease chỉ quyết định có xét SDK prerelease hay không, không tự vượt ranh giới rollForward. Với version 10.0.100 + latestFeature, SDK vẫn ở 10.0 feature band; latestMajor mới có thể chọn major cao hơn. SDK phải được cài sẵn, global.json không tải nó. CI LTS nên false + rollForward trong major mong muốn.
 
-Giá trị `LangVersion` thường gặp: `14.0` (pin trên `net10.0`), `15.0` (pin trên `net11.0`), `latest` (bản cao nhất **SDK hiểu** — với SDK 11 đó là C# 15), `preview` (Unsafe Evolution, không phải “bật C# 15”), `13.0`/`12.0` (hạ syntax, API TFM vẫn theo project). `ISO-2`/`ISO-1` cổ — đừng dùng.
+LangVersion thường gặp: 14.0/15.0 để pin phiên bản compiler hiểu; latest chọn bản phát hành cao nhất compiler hỗ trợ, preview gồm feature thử nghiệm; 13.0/12.0 hạ syntax nhưng không đổi API TFM. Microsoft không hỗ trợ dùng phiên bản C# mới hơn phiên bản gắn với target framework. [Cấu hình phiên bản C#](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/configure-language-version).
 
 ### 2.3 Property thường gặp
 
@@ -426,13 +426,13 @@ dotnet publish -c Release -r linux-x64 -p:PublishSingleFile=true
 | `PublishAot` | Native AOT (mục 12) |
 | `PublishTrimmed` | Cắt IL — rủi ro reflection |
 
-`dotnet run --` tách arg app (xem [main-function.md §5](main-function.md#5-tham-số-dòng-lệnh-args--environment)). RID (`-r`) bắt buộc với AOT/self-contained.
+Dotnet run dùng `--` để tách arg app ([Main/args](main-function.md#5-tham-số-dòng-lệnh-args--environment)). Publish native/AOT/self-contained cần RID hiệu lực; nên chỉ định `-r win-x64` hoặc RID đích rõ ràng trong CI, dù SDK có thể suy ra RID máy hiện tại. Từ net8.0, `-r` **không tự bật self-contained**; ghi `--self-contained true` nếu cần kèm runtime. [Thay đổi RID/self-contained](https://learn.microsoft.com/en-us/dotnet/core/compatibility/sdk/8.0/runtimespecific-app-default).
 
 ---
 
 ## 12. Native AOT (`PublishAot`) — overview & pitfalls
 
-**Ổn định từ .NET 7+;** .NET 10 mở rộng compatibility (JIT/GC/BCL micro-opts khi nâng TFM — hot path vẫn đo BenchmarkDotNet). SDK ≥ 10.0.x trên CI. Binary **không** còn IL + JIT (trừ runtime bring-up): không `Assembly.Load` plugin tùy ý, không emit.
+Native AOT được hỗ trợ từ .NET 7; publish tạo machine code và không dùng JIT lúc chạy. Nâng TFM không bảo đảm tăng hiệu năng: đo trên artifact AOT. Không dùng Assembly.Load để nạp plugin IL tùy ý hoặc Reflection.Emit.
 
 ```xml
 <PropertyGroup>
@@ -479,7 +479,9 @@ public static void Risky() { /* ... */ }
 
 Trimmer mặc định **aggressive** hơn JIT: `MakeGenericType` lúc chạy, `Enum.Parse` một số path, COM, `ConfigurationBinder` bind phức tạp — đọc [Native AOT compatibility](https://learn.microsoft.com/dotnet/core/deploying/native-aot/). `PublishAot` **kéo** `PublishTrimmed`. Tắt trim nhưng giữ AOT không phải mô hình hỗ trợ.
 
-Debug AOT: `DOTNET_ReadyToRun`, dump, log ILC — chậm iteration. Dev loop: `dotnet run` JIT; CI job publish AOT + smoke test.
+Debug AOT cần native debug symbols, debugger/dump phù hợp và log ILC khi publish. DOTNET_ReadyToRun điều khiển ReadyToRun của runtime JIT, không bật JIT cho binary AOT. Dev loop dùng dotnet run; CI publish AOT và smoke test artifact.
+
+Chi tiết về giữ metadata, `DynamicallyAccessedMembers` / `DynamicDependency` / `Requires*` xem [Attributes & Reflection](attributes-reflection.md#9-trimming-và-native-aot). Cấu hình generated JSON contract và tắt reflection defaults xem [System.Text.Json](system-text-json.md#7-source-generation).
 
 ---
 
@@ -511,7 +513,7 @@ dotnet project convert app.cs
 | `#:project path` | ProjectReference |
 | `#:property Name=Value` | MSBuild property |
 | `#:sdk …` | Đổi SDK (vd. Web) |
-| `#:include other.cs` | Thêm file (SDK mới hơn — kiểm tra version) |
+| `#:include other.cs` | Thêm source, **SDK 10.0.300+**; DLL reference cần SDK 11 |
 
 **Mặc định khác csproj:** `PublishAot=true`, `PackAsTool=true`. Tôn trọng `Directory.Build.props` / CPM / `nuget.config` / `global.json` — script trong monorepo “dính” `TreatWarningsAsErrors` là bình thường.
 
@@ -535,14 +537,14 @@ Từ **.NET 11 RC1**: `dotnet format` hiểu chương trình file-based, và pub
 - Phân biệt `ProjectReference` (nội bộ) vs package (biên giới version).  
 - Publish: chọn FDD / self-contained / single-file / AOT **có chủ đích**; đọc warning AOT/trim trước khi ship. File-based apps **bật `PublishAot` mặc định**.  
 - Không nhét file-based app vào cây project nếu sợ “nhiễm” props — hoặc `#:property` tường minh.  
-- .NET 8/9 EOS ~ **10/11/2026** — production dài hạn nên đã ở **10**. C# 15 đi với `net11.0` (RC1 có go-live); đừng trộn syntax 15 vào nhánh pin `net10.0`.
+- .NET 8/9 EOS **10/11/2026**. C# 15 đi với net11.0 RC1; baseline LTS của repo là net10.0/C# 14.
 
 ### 14.1 Đọc bảng C# 14 / 15 như thế nào
 
 Bảng dưới **không** phải changelog đầy đủ và **không** thay topic file. Repo này tra cứu **theo chủ đề** (`oop.md`, `operators.md`, …): mỗi hàng là *cổng version* — feature nằm rải trong file tương ứng, kèm pitfall.
 
 - **C# 14 final** đi với baseline **.NET 10**. Dùng được trên `net10.0` + SDK 10. Extension members, `field`, `?.=`, `nameof` unbound, chuyển đổi Span, modifier trên lambda, partial ctor/event, compound assignment, `#:` (file-based) — GA.  
-- **C# 15** (ổn định từ **RC1**, 08/09/2026) là mặc định của `net11.0`. Union, `closed`, extension indexer, collection `with(…)`, labeled `break`/`continue`, static non-virtual trên interface — **không** cần `LangVersion=preview`. Copy snippet đó vào app `net10.0` → không compile, hoặc compiler SDK 11 “lọt” binary runtime 10 không chạy.  
+- C# 15 được chọn mặc định trên net11.0 từ RC1 (08/09/2026); các feature đã liệt kê không cần preview. SDK/runtime .NET 11 vẫn prerelease, dù RC1 có go-live. Không giả định snippet này chạy trên net10.0.
 - **Unsafe Evolution** tách khỏi C# 15: vẫn `preview` + `<Features>$(Features);updated-memory-safety-rules</Features>`. Có thể đổi tiếp (hướng C# 16 / .NET 12). Đừng bật trên nhánh ship.  
 - Nâng **TFM** `net8.0` → `net10.0` mang API BCL + (mặc định) C# 14. Nâng **SDK** trên CI mà không pin `LangVersion` có thể kéo syntax mới hơn TFM — đó là lý do checklist ghi pin 14.0 trên LTS.  
 - Breaking compiler .NET 10 (overload `Span`/`ReadOnlySpan`, analyzer mới) lộ khi **đổi TFM/SDK**, không chỉ khi “viết C# 14”. Đo build warning = 0 trước khi bật `TreatWarningsAsErrors` trên nhánh chính.

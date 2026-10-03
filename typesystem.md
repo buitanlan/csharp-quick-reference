@@ -50,6 +50,8 @@ sẽ dùng các thông tin này để đảm bảo an toàn kiểu khi nó cấp
   - [9. Mảng (arrays): 1D, nhiều chiều, jagged, `Span<T>`](#9-mảng-arrays-1d-nhiều-chiều-jagged-spant)
   - [10. Nullable Reference Types (NRT)](#10-nullable-reference-types-nrt)
     - [10.1 Annotation attributes](#101-annotation-attributes)
+      - [10.1.1 NotNullWhen và Try-pattern](#1011-notnullwhen-và-try-pattern)
+      - [10.1.2 MemberNotNull và helper khởi tạo](#1012-membernotnull-và-helper-khởi-tạo)
     - [10.2 Pitfalls NRT](#102-pitfalls-nrt)
   - [11. Khai báo biến \& suy luận kiểu (`var`, target-typed, default literal)](#11-khai-báo-biến--suy-luận-kiểu-var-target-typed-default-literal)
   - [12. Giá trị mặc định (default values)](#12-giá-trị-mặc-định-default-values)
@@ -73,9 +75,7 @@ sẽ dùng các thông tin này để đảm bảo an toàn kiểu khi nó cấp
 Tất cả các kiểu dữ liệu trong .NET được thiết kế để dùng bởi bất kỳ ngôn ngữ .NET nào, vì vậy người 
 ta gọi nó là "Hệ thống kiểu chung" (CTS). Có hai đặc điểm quan trọng với CTS:
 
-- Hỗ trợ thừa kế: tất cả các kiểu dữ liệu trong CTS đều hỗ trợ thừa kế, một kiểu dữ liệu có thể thừa kế từ một
-kiểu khác, và tất cả các kiểu dữ liệu, bao gồm cả các kiểu nguyên thủy (primitive type) đều thừa kế trực tiếp
-hoặc gián tiếp từ `System.Object` (`object`).
+- CTS định nghĩa quan hệ kế thừa: class có một base class và có thể implement nhiều interface; struct/enum có base runtime cố định, không cho kế thừa tùy ý. Value/reference types có representation dưới dạng object liên hệ với `System.Object`; pointer, function pointer và managed byref không phải object và không box như vậy.
 - Các kiểu dữ liệu trong .NET được chia làm hai loại: [value type](#31-value-types) (kiểu giá trị) 
 và [reference type](#32-reference-types) (kiểu tham chiếu). Các kiểu dữ liệu được khai báo với `struct` là `value type`;
 `class` và `record class` là reference type; `record struct` vẫn là value type.
@@ -131,7 +131,7 @@ Compiler cảnh báo `CS3001`/`CS3002`… khi bật `[assembly: CLSCompliant(tru
 | Vi phạm | Không compile / không load | Cảnh báo; C# khác vẫn gọi được |
 | Ví dụ ngoài CLS | `uint`, pointer, overload chỉ khác `ref`/`out` | — |
 
-**Pitfall:** `[CLSCompliant(true)]` trên thư viện NuGet công khai — đừng expose `uint` id, `sbyte`, hay generic unconstrained `T` trên public surface nếu consumer có thể là VB. Ứng dụng nội bộ C#-only thì CLS ít quan trọng.
+**Pitfall:** `[CLSCompliant(true)]` kiểm tra public API dùng kiểu/ràng buộc tương thích CLS. `uint`, `sbyte`, pointer cần chú ý; **generic `T` không ràng buộc không tự động vi phạm CLS**. VB/F# vẫn hỗ trợ nhiều kiểu ngoài CLS; attribute này mô tả hợp đồng liên ngôn ngữ.
 
 ### 1.3 CLR, IL, metadata
 
@@ -153,13 +153,13 @@ Luồng: **source C# → Roslyn → IL + metadata → JIT (RyuJIT) → native**.
 - Mỗi **thread** có stack riêng; cấp phát/hủy **LIFO**, không qua GC.  
 - Giới hạn kích thước (thường vài MB) → đệ quy sâu / `stackalloc` lớn → `StackOverflowException`.
 
-**Vì sao stack nhanh:** bump pointer theo frame, không mark/sweep. Đổi lại: không chia sẻ giữa thread, không sống sau khi method return.
+**Stack và lifetime:** frame không cần GC; bộ nhớ local của frame không được dùng sau khi method return. Stack không phải hàng rào cách ly thread. Vị trí vật lý của local phụ thuộc JIT (register, stack hoặc tối ưu bỏ).
 
 ### 2.2 Managed Heap & GC
 
 - **Managed Heap**: nơi **object/reference type** (và **boxed value**) sống; GC thu hồi khi không còn tham chiếu.  
 - **Value type trong object**: tồn tại trong heap **bên trong** object chứa (ví dụ field của class).  
-- **Large Object Heap (LOH)** cho object lớn (≈ ≥ 85KB).  
+- **Large Object Heap (LOH)** cho allocation từ **85.000 byte** trở lên theo ngưỡng mặc định (tính cả overhead object); thu gom cùng Gen 2. **POH** dành cho object được cấp phát pinned; pin object có sẵn không tự chuyển nó sang POH.
 - **Generations** (Gen 0/1/2): tối ưu chi phí thu gom. Có một nguyên tắc là: Những đối tượng có tuổi đời càng ngắn thì xác suất nó không còn được sử dụng càng cao, những đối tượng static hoặc lưu trữ dữ liệu lâu dài có thể sẽ "sống" hết vòng đời ứng dụng, việc nhóm các đối tượng theo tuổi đời do vậy sẽ giúp tối ưu chi phí giải phóng.
 
 | Thế hệ | Ý nghĩa |
@@ -176,7 +176,7 @@ Chi tiết lifetime/`Span`: [memory-spans.md](memory-spans.md).
 ### 2.3 Value type không luôn nằm trên stack
 
 > **Lưu ý quan trọng**: Value types không phải lúc nào cũng nằm trên stack. Vị trí lưu trữ phụ thuộc vào **ngữ cảnh**:
-> - Biến local value type trong method → nằm trên stack (trừ khi bị capture trong closure hoặc async method)
+> - Biến local value type → có thể ở register, stack hoặc bị tối ưu bỏ; capture/lifetime qua await có thể đưa dữ liệu vào object trên heap
 > - Value type là field của class → nằm trên heap (bên trong object)
 > - Value type bị boxed → nằm trên heap
 > - Value type trong mảng → nằm trên heap
@@ -318,7 +318,7 @@ decimal m = 0.1m + 0.2m;
 Console.WriteLine(m == 0.3m);         // True
 ```
 
-**Pitfall:** `float` → `decimal` implicit không có; `int` → `double` implicit (có thể mất chính xác với số lớn). Overflow `int` mặc định *wrap* (unchecked) — xem `checked` ở [exceptions.md](exceptions.md).
+**Pitfall:** `float` → `decimal` không có implicit conversion. Mọi `int` 32-bit đều biểu diễn chính xác trong `double`; **`long` → `double`** có thể mất chính xác dù conversion là implicit. Overflow phép tính `int` runtime thường wrap trong unchecked context; biểu thức hằng overflow mặc định gây lỗi compile — xem [exceptions.md](exceptions.md).
 
 ---
 
@@ -351,7 +351,7 @@ d = d + "2";                           // runtime: "12" (binder)
 ## 5. Struct, `readonly struct`, `ref struct` (byref-like)
 
 - **`struct`**: value type do người dùng định nghĩa; phù hợp dữ liệu nhỏ, bất biến, nhiều instance. Không nên vượt ~16–24 byte nếu dùng nhiều.  
-- **`readonly struct`**: mọi field readonly; tối ưu copy/defensive-copy; an toàn bất biến.  
+- **`readonly struct`**: instance field readonly, giảm defensive copy. Đây là readonly **nông**: object mà field tham chiếu tới vẫn có thể mutable.
 - **`ref struct`**: *byref-like* (ví dụ `Span<T>`, `ReadOnlySpan<T>`) với **ràng buộc nghiêm**:  
   - Không boxed, không dùng làm field của class, không dùng trong async/iterator *qua điểm treo* (`await`/`yield`), không capture lambda, không trong `IEnumerable<T>` thông thường.  
   - Mục tiêu: truy cập bộ nhớ hiệu quả, an toàn (stack-only).  
@@ -440,7 +440,7 @@ var (x, y) = p;                        // deconstruct nếu có Deconstruct
 
 | | `ValueTuple` | `Tuple<>` | named type / record |
 |---|---|---|---|
-| Heap | Không (struct) | Có | class: có / record struct: không |
+| Representation | Struct; có thể nằm trong heap object/array hoặc bị box | Object tham chiếu | class: reference / record struct: value |
 | Tên field | metadata (mất khi qua `object`) | `Item1`… | ổn định |
 | Public API | tạm ổn 2–3 field | tránh | **nên** |
 
@@ -462,7 +462,7 @@ var u2 = u1 with { Name = "Bob" };
 Console.WriteLine(u1 == u2); // false (so sánh theo giá trị)
 ```
 
-**Semantics:** compiler sinh `Equals`/`GetHashCode`/`ToString`/`Deconstruct`/`with`. `record class` vẫn là reference type — `with` **cấp phát object mới**. `record struct` copy-by-value; `with` copy struct.
+Compiler sinh equality, hashing, ToString và hỗ trợ with; positional record mới tự sinh Deconstruct theo positional parameters. Record class vẫn là reference type, with tạo object mới; record struct copy giá trị. Record không tự làm mọi member immutable.
 
 ```csharp
 public record class User(string Id, string Name);
@@ -516,7 +516,7 @@ PrintLetters(text);
 PrintLetters(buffer);
 ```
 
-> Từ C# 14, việc truyền string/T[] vào API nhận Span<T> / ReadOnlySpan<T> trở nên ‘tự nhiên’ hơn nhờ các implicit conversion mới.
+> C# 14 coi span conversions là conversion của ngôn ngữ, giúp generic type inference và extension receiver binding. Nhiều conversion string/array → span đã có qua API BCL trước đó; không phải mọi conversion này mới xuất hiện trong C# 14.
 
 **Pitfall covariance:** generic `List<T>` **không** covariant theo cách array (`List<string>` không phải `List<object>`). Đó là *tính năng* — tránh lỗ hổng array.
 
@@ -551,22 +551,94 @@ if (name is not null)
 
 ### 10.1 Annotation attributes
 
+Các attributes trong `System.Diagnostics.CodeAnalysis` mô tả precondition/postcondition cho **nullable flow analysis**; chúng không tự sinh guard runtime. Implementation phải thực hiện đúng hợp đồng. Xem [nullable analysis attributes](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/attributes/nullable-analysis) và [metadata/attribute targets](attributes-reflection.md#3-target-và-đối-số-attribute).
+
+| Attribute | Hợp đồng |
+|---|---|
+| `AllowNull` / `DisallowNull` | Input được phép null dù type non-null / input không nên null dù type nullable |
+| `MaybeNull` / `NotNull` | Output có thể null / khác null sau khi method trả về bình thường |
+| `NotNullWhen(bool)` | Parameter khác null khi method trả đúng giá trị bool đã khai báo |
+| `MaybeNullWhen(bool)` | Parameter có thể null ở nhánh bool đã khai báo; hữu ích cho generic Try-pattern |
+| `NotNullIfNotNull(parameterName)` | Output khác null nếu input được chỉ định khác null |
+| `MemberNotNull(memberNames)` | Các field/property được liệt kê khác null khi method trả về bình thường |
+| `MemberNotNullWhen(bool, memberNames)` | Các members khác null ở nhánh bool đã khai báo |
+| `DoesNotReturn` / `DoesNotReturnIf(bool)` | Method không trả về / không trả về với giá trị bool tương ứng |
+
+#### 10.1.1 NotNullWhen và Try-pattern
+
 ```csharp
+#nullable enable
+using System.Diagnostics.CodeAnalysis;
+
+// Đặt các helpers trong type phù hợp.
 public static bool TryGet(
-    Dictionary<string, string> map,
+    IReadOnlyDictionary<string, string?> map,
     string key,
     [NotNullWhen(true)] out string? value)
-    => map.TryGetValue(key, out value);
+    => map.TryGetValue(key, out value) && value is not null;
 
-if (TryGet(map, "k", out var v))
-    Console.WriteLine(v.Length); // v non-null khi true
+public static bool HasText([NotNullWhen(true)] string? text)
+    => !string.IsNullOrWhiteSpace(text);
+
+public static void PrintValue(IReadOnlyDictionary<string, string?> map)
+{
+    if (TryGet(map, "k", out var value))
+        Console.WriteLine(value.Length); // value non-null khi true.
+
+    // Nhánh false không cam kết value luôn null: có thể không đạt điều kiện khác.
+}
 
 [return: NotNullIfNotNull(nameof(s))]
 public static string? Normalize(string? s)
     => s?.Trim();
 ```
 
-`MaybeNull` / `AllowNull` / `DisallowNull` / `MemberNotNull` / `DoesNotReturnIf` — dùng khi luồng null không diễn đạt nổi bằng `T?` thuần.
+`NotNullWhen(true)` không có nghĩa “false thì null”; đây là implication một chiều. Ví dụ `HasText("")` trả false nhưng input vẫn khác null. Nếu method là `IsMissing`, dùng `NotNullWhen(false)` khi nhánh false bảo đảm input khác null. Attribute gắn vào parameter, không gắn vào return value. [NotNullWhen](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.codeanalysis.notnullwhenattribute?view=net-10.0).
+
+Với generic `TryGet<T>(..., out T value)`, `[MaybeNullWhen(false)]` diễn tả failure có thể trả `default`; success giữ nullability của `T`. Nó không bảo đảm success non-null khi chính `T` là nullable. Không dùng `[NotNullWhen(true)]` cho một lookup vẫn trả true khi value null.
+
+#### 10.1.2 MemberNotNull và helper khởi tạo
+
+```csharp
+#nullable enable
+using System.Diagnostics.CodeAnalysis;
+
+public sealed class Session
+{
+    private string _id;
+    private string? _token;
+
+    public Session() => Initialize();
+
+    public string Id => _id;
+
+    [MemberNotNull(nameof(_id))]
+    private void Initialize()
+    {
+        _id = Guid.NewGuid().ToString("N");
+    }
+
+    [MemberNotNullWhen(true, nameof(_token))]
+    public bool IsAuthenticated => _token is not null;
+
+    public void SignIn(string token)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        _token = token;
+    }
+
+    public int TokenLength()
+    {
+        if (!IsAuthenticated)
+            return 0;
+        return _token.Length; // Flow biết _token khác null tại đây.
+    }
+}
+```
+
+Compiler không tự theo mọi assignment trong helper được constructor gọi. `[MemberNotNull(nameof(_id))]` truyền postcondition của `Initialize()` cho constructor, tránh `CS8618` mà không cần `_id = null!`. Attribute này cũng dùng được với helper bảo đảm nullable member được khởi tạo trước khi truy cập; nếu helper ném exception thì không có postcondition cho caller. [MemberNotNull](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.codeanalysis.membernotnullattribute?view=net-10.0).
+
+Postcondition cần đúng ở mọi đường return bình thường; thiếu assignment có thể gây `CS8774`, và hợp đồng sai vẫn có thể gây NRE nếu bỏ qua warning. Đây cũng không phải synchronization: thread khác có thể thay đổi shared state. `NotNullWhen` mô tả return `bool` trực tiếp, không mô tả kết quả được await từ `Task<bool>`; async API nên trả kết quả có shape/nullability rõ ràng.
 
 ### 10.2 Pitfalls NRT
 
@@ -574,6 +646,8 @@ public static string? Normalize(string? s)
 - Generic `T` không `class`/`struct`: `T?` nghĩa *khác* (unconstrained).  
 - Array `string[]` vẫn nhận `null` phần tử; NRT trên array yếu.  
 - `#nullable disable` trong file generated — đừng copy vào domain code.
+
+JSON deserialization có runtime options `RespectNullableAnnotations` / required contracts, nhưng enforcement không phủ mọi vị trí của NRT. Xem [System.Text.Json: required và nullable](system-text-json.md#4-required-nullable-và-constructor).
 
 **Vì sao / Khi nào dùng:** bật NRT toàn project (.NET 10 mặc định trên template hiện đại). Annotate biên API (`Try*`, factory). Không dựa NRT thay validation runtime trên input ngoài.
 
@@ -669,7 +743,7 @@ Compiler áp **ref-safety** lên mọi chỗ dùng `T`: không box, không array
 
 **So sánh:** `where T : struct` **không** gồm `ref struct`. Phải ghi thêm `allows ref struct`.
 
-**Vì sao / Khi nào dùng:** thư viện generic trên `Span`/`ReadOnlySpan` (parser, hash). BCL: `string.Create<TState>(..., TState state, ...)` với `TState : allows ref struct`. Không thêm “cho vui” — API trở nên khó dùng (caller phải `scoped`).
+**Vì sao / Khi nào dùng:** generic xử lý Span/ReadOnlySpan (parser, hash). BCL có string.Create với TState cho phép ref struct. Anti-constraint này buộc **implementation** tuân thủ ref safety, không bắt mọi caller ghi `scoped`.
 
 Xem [memory-spans.md](memory-spans.md).
 
@@ -678,6 +752,8 @@ Xem [memory-spans.md](memory-spans.md).
 - `out` (covariant — chỉ *xuất* `T`) cho **interfaces/delegates**: `IEnumerable<out T>`.  
 - `in` (contravariant — chỉ *nhập* `T`): `IComparer<in T>`.  
 - Giúp tái sử dụng kiểu generic giữa kế thừa: `IEnumerable<string>` có thể dùng nơi yêu cầu `IEnumerable<object>`.
+
+Variance conversion chỉ áp dụng khi type argument là reference type; `IEnumerable<int>` không phải `IEnumerable<object>`.
 
 > Lưu ý: **Array covariance** tồn tại nhưng *nguy hiểm* (mục 9).
 
@@ -741,7 +817,7 @@ Trong ví dụ trên chúng ta không cần viết Console.WriteLine hay Math.Sq
 
 ### 15.1 Chuyển đổi chuẩn
 
-- **Implicit**: an toàn, không mất dữ liệu (`int -> long`).  
+- **Implicit**: compiler cho chuyển không cần cast (`int -> long`); một số implicit numeric conversion vẫn mất độ chính xác (`long -> double`, `int -> float`).
 - **Explicit**: có thể mất dữ liệu, cần cast (`double -> int`).  
 - **Parse/TryParse** cho string → số/ngày…
 
@@ -807,7 +883,7 @@ if (row is [1, .. var rest, 3])
 
 **So sánh với cast:** pattern không ném; `switch` exhaustiveness trên union/`closed` (C# 15) mạnh hơn `if-else` + `_`.
 
-**Pitfall:** `switch` trên `object` **không** exhaustive trừ `closed`/union. `is T` với `T` nullable value: `is int?` ít dùng — `is int n` đã phủ `HasValue`.
+**Pitfall:** switch trên object cần arm bao quát nếu muốn xử lý mọi giá trị. Declaration pattern `is int? n` không hợp lệ; dùng `is int n` và `is null`. Phép kiểm kiểu cũ `obj is int?` (không designation) vẫn hợp lệ và chỉ true khi object chứa int có giá trị; null không match.
 
 Union **Try-Both**: [§18.3](#183-pattern-matching--tính-đầy-đủ-exhaustiveness--try-both).
 
@@ -815,7 +891,7 @@ Union **Try-Both**: [§18.3](#183-pattern-matching--tính-đầy-đủ-exhaustiv
 
 ## 16. Unsafe & unmanaged types (overview), function pointers
 
-- **Unsafe context** (`unsafe { ... }`): dùng con trỏ (`T*`), `stackalloc`, `fixed`. Chỉ dùng khi **thật cần** (interop/hiệu năng đặc biệt).  
+- **Unsafe context** (`unsafe { ... }`): cần cho khai báo/dereference con trỏ và `fixed` trên baseline. `stackalloc` vào `Span<T>` không cần `unsafe`.
 - **Unmanaged types**: không chứa reference; có thể dùng trong `sizeof`, `stackalloc`, `unmanaged` constraint.  
 - **Function pointers** (C# 9, unsafe): `delegate*<int, void>` — hiệu năng cao khi interop/native, nhưng mất an toàn kiểu ở C# mức cao; đa phần nên dùng **delegate**.
 
@@ -847,7 +923,7 @@ Union (C# 15) không thay cây này — chúng *ghép* case type đã có. `clos
 
 ## 18. Union types (C# 15)
 
-> **C# 15 / .NET 11** — ổn định từ **RC1** (08/09/2026). Trên `net11.0`, C# 15 là mặc định: **không** cần `<LangVersion>preview</LangVersion>`.  
+> **C# 15 / .NET 11 RC1** (08/09/2026): feature đã được bật mặc định trên `net11.0`, không cần `<LangVersion>preview</LangVersion>`. Bản runtime/SDK .NET 11 vẫn là prerelease.
 > Chưa thuộc baseline .NET 10 / C# 14. GA .NET 11 dự kiến ~11/2026 (RC1 đã có go-live).
 
 C# 15 giới thiệu **union types** — kiểu có thể là đúng một trong số các kiểu thành viên đã xác định (tập đóng). Tương tự *discriminated unions* (F#) / *union types* (TypeScript), theo phong cách C#.
@@ -882,7 +958,7 @@ Pet pet2 = new Cat("Whiskers");   // hợp lệ
 
 ### 18.3 Pattern matching & tính đầy đủ (exhaustiveness) — Try-Both
 
-Compiler biết tất cả các case của union, nên **bắt buộc** xử lý đủ mọi trường hợp trong `switch` mà không cần arm `_` / `default`:
+Compiler biết các case của union, nên kiểm tra **exhaustiveness của switch expression** mà không cần arm `_`. Thiếu case sinh **warning**, không tự thành compile error trừ khi cấu hình warnings-as-errors; switch statement không bắt buộc bao phủ mọi case:
 
 ```csharp
 string name = pet switch

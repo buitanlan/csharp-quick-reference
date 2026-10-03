@@ -592,7 +592,7 @@ public static class StringExtensions
 
 **Ghi chú:**  
 - Extension method cổ điển (`this T`) vẫn hợp lệ và tương thích nhị phân với extension members.  
-- Chi tiết thiết kế & `this`: [methods.md — `this` và extension method](methods.md#12-this-và-extension-method); property/`field` liên quan OOP: [oop.md](oop.md).  
+- Chi tiết thiết kế & `this`: [methods.md — `this` và extension method](methods.md#12-this-và-extension-method--extension-members); property/`field` liên quan OOP: [oop.md](oop.md).
 - Indexer extension: **C# 15**, không phải C# 14 `extension` block method. Không dùng `extension` làm tên type trừ khi contextual slot cho phép.
 
 ---
@@ -664,7 +664,7 @@ public int Score
 
 - Chỉ hợp lệ trong `get`/`set`/`init` của property dùng auto-backing-field (không trộn với field `_msg` tự viết trên cùng property).
 - Giữ được cú pháp auto-property + logic validate/transform ngắn.
-- Chi tiết property / OOP: [oop.md — Truy cập backing field (C#14)](oop.md#52-truy-cập-backing-field-c14).
+- Chi tiết property / OOP: [oop.md — Truy cập backing field (C#14)](oop.md#52-truy-cập-backing-field--từ-khóa-field-c-14).
 - `field` contextual: `int field = 1;` ngoài accessor vẫn là identifier. Trùng tên với property `field` trong cùng accessor = warning/lỗi tùy version — đổi tên param/`value`.
 
 ---
@@ -1024,7 +1024,7 @@ public class Factory<T> where T : new()
 ```
 
 **Ghi chú:**  
-Ba nghĩa: (1) `new T()`, (2) hide member, (3) `where T : new()`. `new` hide **không** polymorphic — gọi qua base vẫn base; muốn override dùng `virtual`. Constraint `new()` loại `ref struct` / type không có ctor public parameterless. Target-typed `new()` (C# 9): `List<int> x = new();`.
+Ba nghĩa: tạo instance, hide member và constraint new(). Hiding không dispatch như override. Constraint new() yêu cầu type không abstract có constructor public không tham số; ref struct cần thêm `allows ref struct` (C# 13+). Type có required members thường không thỏa new() nếu ctor không có SetsRequiredMembers. Target-typed new: `List<int> x = new();`.
 
 ---
 
@@ -1594,14 +1594,14 @@ void Log(string message) => Console.WriteLine(message);
 ```
 
 **Ghi chú:**  
-Không phải kiểu giá trị — không `var x = void`. `Task`/`Task<int>` khác `void` (async). `async void` chỉ event handler — [async.md](async.md). `Main` `void` → exit 0 trừ `ExitCode`. Pointer: `void*`.
+Void là kiểu trả về đặc biệt, không dùng làm variable/type argument trong C#. Reflection biểu diễn nó bằng System.Void (value type), nhưng không phải một struct dùng như int. Async void dành cho event handler; Task khác void. [Async](async.md). Main void dùng ExitCode nếu cần mã thoát; void* là con trỏ untyped trong unsafe.
 
 ---
 
 ## 77. `volatile`
 
 - **Loại:** reserved · **C#:** 1.0  
-- **Mục đích:** Field `volatile` đảm bảo read/write luôn đi thẳng bộ nhớ, cải thiện visibility giữa thread.
+- **Mục đích:** Field volatile dùng semantics acquire khi đọc và release khi ghi để kiểm soát thứ tự quan sát giữa thread; không phải cam kết bỏ qua mọi CPU cache.
 
 ```csharp
 public volatile bool _stopped;
@@ -1665,7 +1665,7 @@ string name = pet switch
 ## 80. `closed`
 
 - **Loại:** contextual · **C#:** 15.0 — mặc định trên `net11.0` từ RC1  
-- **Mục đích:** Đánh dấu class/record hierarchy **đóng** trong assembly — mọi derived type phải cùng assembly; `switch` exhaustive. Xem [oop.md §2.6](oop.md#26-closed-hierarchies-c-15).
+- **Mục đích:** Đóng tập direct derived type của class/record trong assembly/module, giúp xét exhaustiveness. [Closed hierarchy](oop.md#26-closed-hierarchies-c-15).
 
 **Ví dụ:**
 
@@ -1676,7 +1676,7 @@ public record class Open(float Percent) : GateState;
 ```
 
 **Ghi chú:** Khác `union` (ghép kiểu không cần thừa kế). Không thuộc baseline C# 14.  
-Mọi derived phải **cùng assembly**; library public `closed` hạn chế consumer extend — đúng ý exhaustiveness, sai ý plugin. Chi tiết: [oop.md §2.6](oop.md#26-closed-hierarchies-c-15).
+Closed ngầm abstract, không viết thêm abstract/sealed/static. Chỉ direct descendants phải cùng assembly/module; nhánh con mở vẫn cho phép consumer kế thừa gián tiếp. [Quy tắc chi tiết](oop.md#26-closed-hierarchies-c-15).
 
 ---
 
@@ -1699,7 +1699,7 @@ Các token dưới **không** luôn reserved; chỉ là keyword trong ngữ cả
 | `var` | suy luận kiểu **local** (không phải field) | `var list = new List<int>();` | [typesystem.md](typesystem.md) §11 |
 | `nameof` | tên symbol; C# 14 unbound generic | `throw …(nameof(arg));` / `nameof(List<>)` | [operators.md](operators.md) §13 |
 | `nint` / `nuint` | integer kích thước pointer | `nint p = 0;` | [typesystem.md](typesystem.md) §3.3 |
-| `unmanaged` | generic constraint (blittable) | `where T : unmanaged` | [typesystem.md](typesystem.md) §13 |
+| `unmanaged` | constraint không chứa managed reference; không đồng nghĩa blittable | `where T : unmanaged` | [typesystem.md](typesystem.md) §13 |
 | `allows` | `allows ref struct` (C# 13) | `where T : allows ref struct` | [typesystem.md](typesystem.md) §13 · [memory-spans.md](memory-spans.md) |
 | `dynamic` | DLR binding lúc chạy | `dynamic d = json; d.Name` | [typesystem.md](typesystem.md) §4 |
 | `get` / `set` / `init` | accessor property; `init` chỉ lúc khởi tạo | `public int X { get; init; }` | [oop.md](oop.md) |

@@ -136,7 +136,7 @@ Ba cách “nhường CPU”, không cái nào là lock:
 | | Việc thực sự | Khi nào |
 |---|---|---|
 | `Thread.Sleep(ms)` | **Block** thread ít nhất ~`ms` (độ phân giải timer, thường 15ms trừ khi timeBeginPeriod / timer hiện đại) | Backoff thô, test. **Không** `Sleep` trên pool để chờ việc |
-| `Thread.Sleep(0)` | Nhường phần timeslice còn lại cho thread **cùng priority** | Hiếm khi đúng công cụ |
+| `Thread.Sleep(0)` | Nhường phần timeslice còn lại cho thread **cùng priority** đang sẵn sàng | Hiếm khi đúng công cụ |
 | `Thread.Yield()` | Gợi ý OS chạy thread **đang ready trên cùng CPU**; không có thì trả `false` ngay | Spin ngắn, trước khi `SpinWait` |
 
 ```csharp
@@ -158,7 +158,7 @@ var t = new Thread(() => { /* ... */ })
 t.Start();
 ```
 
-> **Không** nên lạm dụng Priority. Lập lịch OS & thread pool đã tối ưu tốt. `Priority` là **gợi ý** cho scheduler, không phải hạn ngạch CPU: `Highest` vẫn bị preempt, và nâng mọi worker lên `AboveNormal` không làm app nhanh hơn — chỉ tranh nhau. `Name` hiện trong debugger, dump, `dotnet-trace`; đặt **trước** `Start` để thread mới sinh ra đã có tên. Pool thread do runtime đặt tên — đừng `Thread.CurrentThread.Name = ...` trên pool (chỉ gán được một lần, lần sau ném).
+> `Priority` là gợi ý cho scheduler, không phải hạn ngạch CPU. Đặt `Name` trước `Start` giúp debugger/dump có tên ngay. Trên .NET hiện đại có thể đổi tên; giới hạn chỉ gán một lần thuộc .NET Framework. Tránh đặt tên pool thread theo từng request vì cùng thread được tái dùng; dùng logging scope/correlation ID.
 
 ---
 
@@ -231,7 +231,7 @@ var longTask = Task.Factory.StartNew(
 Mỗi dòng có bản kèm `CancellationToken`. Token **chỉ** được xét lúc task **bắt đầu**:
 
 - Đã hủy trước khi delegate chạy → delegate **không** chạy, task ở trạng thái Canceled.
-- Hủy sau khi delegate đã chạy → delegate chạy tiếp. Task chỉ thành Canceled nếu body **tự** ném `OperationCanceledException` gắn **đúng** token đó. Token khác, hoặc exception khác → Faulted.
+- Hủy sau khi delegate đã chạy không tự dừng body. Với delegate đồng bộ, task nhận cancellation khi body ném `OperationCanceledException` gắn token đã hủy và trùng token của task; trường hợp khác thường Faulted. Với `Func<Task>`, Task.Run unwrap trạng thái task bên trong: async method ném OCE tạo task Canceled ngay cả khi token khác token truyền cho Task.Run.
 - Token **không** được đưa vào `Action` sync. Body sync muốn hợp tác thì phải capture token từ ngoài (closure), không phải từ tham số `Run`.
 
 ```csharp
@@ -285,7 +285,7 @@ Task.Factory.StartNew(
 
 **Pitfall async không unwrap:** `Task.Run(() => SomeAsync())` khi `SomeAsync` trả `Task` thì `Run(Func<Task>)` unwrap — `await` đợi cả phía trong. `Task.Run(() => { _ = SomeAsync(); })` là `Action`: task ngoài xong ngay khi gọi, lỗi phía trong không ai đợi.
 
-`Task.Run` **không** làm I/O async nhanh hơn — chỉ chuyển CPU-bound khỏi request thread. Bọc sync I/O trong `Task.Run` trên ASP.NET: tốn 2 thread (request + pool) — sửa API async.
+`Task.Run` không làm I/O async nhanh hơn. Bọc sync I/O trong Task.Run vẫn chiếm một pool worker suốt thời gian chờ; nếu caller await thì caller được giải phóng, không phải luôn có hai thread bị giữ. Ưu tiên API I/O async thực sự.
 
 `Task.Run` có overload `Func<Task>`: lambda `async` được **unwrap** thành một `Task`, không phải `Task<Task>`. Exception trong `await` bên trong vẫn nằm trên `Task` trả về.
 
@@ -320,7 +320,7 @@ Hai số **không** cùng một việc:
 | Chạy | `Task.Run`, `QueueUserWorkItem`, `Parallel`, tiếp tục sau `await` khi không có sync context | Callback hoàn thành I/O (Windows IOCP). Lúc `await` socket, **không** có thread nào đứng chờ |
 | Đừng | Block dài (Sleep, `.Result`, lock chờ I/O) | Block trong callback hoàn thành — pool I/O cũng cạn |
 
-Pool **không** tạo một worker cho mỗi item ngay khi hàng đợi dài. Nó đo throughput rồi tiêm thêm (hill climbing). Khi mọi worker đang block, heuristic starve tiêm thêm nhanh hơn, nhưng không phải 200 thread cùng lúc, và thread đã block vẫn block. Burst 200 lần `Task.Run` mà mỗi cái block 1 giây: một phần chạy, phần còn lại chờ → latency. `SetMinThreads` **dựng sẵn** số worker để burst không chờ tiêm. Đặt min ≈ max (hàng nghìn) = lúc nào cũng nhiều thread, cache hỏng, context switch. Mặc định min thường = số CPU — để yên trừ khi đo được starve (mục 10).
+Pool điều chỉnh số worker theo throughput (hill climbing) và phát hiện blocking/starvation. `SetMinThreads` **không tạo sẵn hoặc giữ luôn đủ số thread**: nó nâng ngưỡng tạo worker theo nhu cầu trước khi áp dụng cơ chế điều tiết thông thường. Min quá cao có thể gây tạo dư thread khi tải tăng, tăng context switch và bộ nhớ. Chỉ đổi khi đã đo được vấn đề (§10).
 
 `SetMaxThreads` thấp hơn số việc block đồng thời → hàng đợi vô hạn, không thêm được worker. Hầu như không cần đụng max.
 
@@ -479,7 +479,7 @@ bool TryIncOnce()
 | Yêu cầu | Mọi .NET | .NET **9+** (API); `lock` nhận diện từ **C# 13** |
 | `await` | Cấm trong `lock` | Vẫn **cấm** — không biến lock thành async mutex |
 
-**Pitfall:** `lock ((object)_gate)` **boxing/cast** có thể đi đường Monitor trên object wrapper — đừng cast `Lock` về `object` để `Monitor.Enter`. Giữ kiểu `Lock`.
+**Pitfall:** `System.Threading.Lock` là reference type, cast sang `object` không boxing. Tuy nhiên `lock ((object)_gate)` dùng Monitor, còn `lock (_gate)` dùng Lock: **hai cơ chế khóa độc lập trên cùng object**, không bảo vệ lẫn nhau. Giữ kiểu Lock nhất quán.
 
 ```csharp
 object boxed = _gate;
@@ -489,7 +489,7 @@ lock (boxed) // KHÔNG phải Lock path — object khác / sai ý
 
 Condition wait: giữ `object` riêng cho `Monitor.Wait` **hoặc** (khuyến nghị) không Wait/Pulse — producer/consumer = Channel.
 
-**Khuyến nghị (baseline .NET 10):** field đồng bộ mới dùng `Lock`; code cũ `object` gate vẫn đúng — không bắt buộc rewrite hàng loạt. Statement-level: [statements.md §10](statements.md#10-đồng-bộ-hoá-lock-con-trỏ-systemthreadinglock).
+**Khuyến nghị (baseline .NET 10):** field đồng bộ mới dùng `Lock`; code cũ `object` gate vẫn đúng — không bắt buộc rewrite hàng loạt. Statement-level: [statements.md §10](statements.md#10-đồng-bộ-hoá-lock-với-systemthreadinglock).
 
 **Deadlock cổ điển với `lock`/`Lock`:**
 
@@ -529,7 +529,7 @@ Interlocked.Add(ref x, 10);
 var old = Interlocked.Exchange(ref x, 123);
 ```
 
-`x++` **không** nguyên tử: hai thread cùng đọc 5, cùng ghi 6, một lần tăng mất. `Interlocked.Increment` là một lệnh CPU (lock xadd / tương đương) — đủ cho **một** biến đếm.
+X++ không nguyên tử: hai thread cùng đọc 5 rồi cùng ghi 6, mất một lần tăng. Interlocked.Increment bảo đảm atomic read-modify-write; cách phát lệnh tùy JIT/architecture. Phù hợp một biến đếm, không biến nhiều cập nhật thành một giao dịch.
 
 `CompareExchange` là CAS: ghi `next` chỉ khi ô nhớ vẫn bằng `expected`. Đây là vòng lock-free khi “tăng” không có API sẵn (hoặc cập nhật có điều kiện):
 
@@ -554,7 +554,7 @@ Với `++`, gọi `Increment` — đừng tự viết CAS. CAS thất bại thì
 
 ```csharp
 using System.Threading;
-volatile bool _done; // hoặc Volatile.Read/Write cho field thường
+bool _done; // field thường, mọi truy cập qua Volatile.Read/Write
 
 void Worker()
 {
@@ -598,8 +598,8 @@ gate.Wait();   // cả hai qua — cổng vẫn mở
 gate.Reset();  // đóng lại; Wait sau đó block
 
 ticket.Set();
-ticket.Wait(); // lấy vé, event về unsignaled
-// ticket.Wait(); // block — cần Set nữa
+ticket.WaitOne(); // lấy vé, event về unsignaled
+// ticket.WaitOne(); // block — cần Set nữa
 
 using (gate) { }
 ticket.Dispose();
@@ -607,7 +607,7 @@ ticket.Dispose();
 
 Hai worker + `AutoResetEvent`: mỗi `Set` từ producer đánh thức **một** consumer. Dùng `Manual` cho “init xong, mọi người chạy”. Dùng `Auto` cho “có một đơn vị việc”. Nhiều vé cùng lúc, hoặc `await`: `SemaphoreSlim`, không xếp nhiều `AutoResetEvent`.
 
-`ManualResetEvent` / `AutoResetEvent` (không Slim) là kernel object — cross-process được nếu named, đắt hơn Slim. In-process: bản Slim. `WaitHandle.WaitAny` / `WaitAll` chỉ nhận `WaitHandle` (kernel), không nhận `ManualResetEventSlim`.
+`ManualResetEvent` / `AutoResetEvent` là WaitHandle dựa trên OS. Muốn event có tên để chia sẻ process trên Windows, tạo `EventWaitHandle` với `EventResetMode` và `name`; hai class trên không có constructor nhận tên. `WaitAny` / `WaitAll` nhận WaitHandle, không nhận trực tiếp `ManualResetEventSlim`.
 
 ### 4.5 `SemaphoreSlim`
 
@@ -683,7 +683,7 @@ T Read<T>(Func<T> f)
 
 Đừng `await` khi đang giữ RW lock. Contention ghi cao → `Lock` đơn giản hơn.
 
-Cùng thread đang `EnterReadLock` rồi `EnterWriteLock`: mặc định `NoRecursion` ném `LockRecursionException` ngay. `SupportsRecursion` vẫn không phải đường nâng cấp — write phải đợi mọi reader thả, kể cả read của chính thread đó, và deadlock. Đường đúng là **upgradeable read**: nhiều upgradeable **không** chạy cùng nhau (một writer tiềm năng), nhưng vẫn song song với read thường.
+Cùng thread giữ read lock rồi xin write lock ném `LockRecursionException`, kể cả `SupportsRecursion`. Đường nâng cấp đúng là **upgradeable read**: chỉ một upgradeable reader tại một thời điểm, vẫn chạy song song với reader thường.
 
 ```csharp
 void UpdateIfStale()
@@ -797,11 +797,13 @@ async Task DemoAsync()
 
 **Pitfall `ThreadLocal` trên pool:** không `Dispose` + factory nặng → leak; `Value` còn sau job → request sau đọc nhầm. `try/finally { local.Value = default; }`.
 
-`AsyncLocal` setter: thay đổi **sau** khi đã queue continuation không luôn lan ra sau — hiểu copy-on-write (con thấy snapshot lúc yield). Đừng dùng `AsyncLocal` như global mutable không document.
+AsyncLocal truyền giá trị xuống child flow; gán trong child không tự truyền ngược về caller sau await. Nếu giá trị là reference tới object mutable, child/caller vẫn có thể cùng sửa object đó. Không coi copy-on-write ExecutionContext là deep copy dữ liệu.
 
 Ambient context ASP.NET Core: `IHttpContextAccessor` dựa ExecutionContext — cùng họ `AsyncLocal`, không `ThreadLocal`.
 
 **ExecutionContext & `ConfigureAwait`:** `await` (mặc định) capture **ExecutionContext** (gồm `AsyncLocal`, security, culture) *kể cả* khi `ConfigureAwait(false)` — `false` chỉ bỏ **SynchronizationContext** / UI marshal, **không** xóa `AsyncLocal`. Muốn cắt hẳn: `ExecutionContext.SuppressFlow` hoặc không set `AsyncLocal` trước khi queue work nền.
+
+Không await **bên trong** scope SuppressFlow: việc Undo/Dispose phải diễn ra trên thread đã suppress. Queue work trong scope rồi await Task ở ngoài; vẫn quan sát lỗi của task nền.
 
 ```csharp
 AsyncLocal<string> trace = new();
@@ -816,7 +818,7 @@ using (ExecutionContext.SuppressFlow())
 }
 ```
 
-`ThreadLocal.Values` (mọi thread đã touch) — debug; production đừng iterate. `Dispose` `ThreadLocal` khi không dùng (unregister slot).
+`ThreadLocal.Values` chỉ dùng được nếu constructor có `trackAllValues: true`; mặc định đọc property này ném `InvalidOperationException`. Dispose ThreadLocal khi hết dùng; nếu các giá trị giữ resource thì phải dọn chúng riêng.
 
 ---
 
@@ -841,7 +843,7 @@ catch (OperationCanceledException) { Console.WriteLine("Canceled"); }
 - Với `Thread`, không còn `Abort` trong .NET hiện đại (không an toàn). Hãy **hợp tác** qua `CancellationToken`/cờ tự quản.
 - Token trên `Task.Run(..., token)` **không** abort body đang chạy — chỉ chuyển Task sang canceled nếu **chưa** bắt đầu, hoặc kết hợp với throw trong body.
 
-Token không chọc vào thread đang chạy CPU. Body phải **nhìn** token. Hai kiểu nhìn: ném (`ThrowIfCancellationRequested` → `OperationCanceledException`, `await` coi là canceled nếu cùng token) hoặc cờ (`IsCancellationRequested` rồi thoát sạch, không ném).
+Body CPU phải tự kiểm token: ném OCE để báo cancellation, hoặc thoát bình thường nếu đó là contract. Async method ném OCE tạo task Canceled; delegate đồng bộ của Task.Run có thêm quy tắc token matching (§3.2.1). Await không tự quyết định trạng thái của task.
 
 `new Thread` không nhận token. Truyền vào closure và poll — `Sleep` vẫn block đến hết khoảng đó, rồi mới thấy hủy:
 
@@ -870,7 +872,7 @@ using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token
 linked.Token.Register(() => Console.WriteLine("stop"), useSynchronizationContext: false);
 ```
 
-Callback của `Register` chạy trên thread gọi `Cancel`. Đừng block trong callback (nằm dưới lock của người hủy). `useSynchronizationContext: false` tránh marshal về UI. `await using` / `Dispose` registration khi không còn muốn nghe.
+Callback Register thường chạy đồng bộ trên đường Cancel; nếu token đã hủy có thể chạy ngay lúc Register. Callback blocking làm chậm caller và có thể gây deadlock với khóa ứng dụng. Dispose registration khi hết cần; useSynchronizationContext:false tránh marshal về UI.
 
 `ThrowIfCancellationRequested` ném `OperationCanceledException` (subclass của nó là `TaskCanceledException` khi từ `Task`). `catch (OperationCanceledException)` bắt cả hai. Bắt `Exception` rồi nuốt = coi hủy là lỗi nghiệp vụ.
 
@@ -922,15 +924,28 @@ var ch = Channel.CreateBounded<int>(new BoundedChannelOptions(100)
     SingleReader = false
 });
 
-_ = Task.Run(async () =>
+using var pipelineCts = new CancellationTokenSource();
+async Task ProduceAsync(CancellationToken token)
 {
-    for (int i = 0; i < 1000; i++)
-        await ch.Writer.WriteAsync(i);
-    ch.Writer.Complete();
-});
+    try
+    {
+        for (int i = 0; i < 1000; i++)
+            await ch.Writer.WriteAsync(i, token);
+    }
+    catch (Exception ex) { ch.Writer.TryComplete(ex); throw; }
+    finally { ch.Writer.TryComplete(); }
+}
 
-await foreach (var item in ch.Reader.ReadAllAsync())
-    Process(item);
+async Task ConsumeAsync(CancellationToken token)
+{
+    await foreach (var item in ch.Reader.ReadAllAsync(token)) Process(item);
+}
+async Task GuardAsync(Func<CancellationToken, Task> run)
+{
+    try { await run(pipelineCts.Token); }
+    catch { pipelineCts.Cancel(); throw; }
+}
+await Task.WhenAll(GuardAsync(ProduceAsync), GuardAsync(ConsumeAsync));
 ```
 
 **Unbounded** (đơn giản hơn, cẩn thận OOM nếu producer nhanh hơn consumer):
@@ -1142,7 +1157,7 @@ Sửa ở app: `await LoadAsync()` trên UI, đừng `.Result`. Sửa ở thư v
 ```csharp
 ThreadPool.GetMaxThreads(out var maxW, out var maxIO);
 ThreadPool.GetAvailableThreads(out var availW, out var availIO);
-long pending = ThreadPool.PendingWorkItemCount; // .NET 8+: việc đã queue, chưa có worker nhận
+long pending = ThreadPool.PendingWorkItemCount; // .NET Core 3.0+: số work item đang chờ
 int workers = ThreadPool.ThreadCount;
 Console.WriteLine($"Pool: workers={workers} availW={availW}/{maxW} pending={pending} availIO={availIO}/{maxIO}");
 ```
@@ -1151,13 +1166,13 @@ Console.WriteLine($"Pool: workers={workers} availW={availW}/{maxW} pending={pend
 
 | Số | Ý nghĩa |
 |---|---|
-| `availW` gần 0 và `pending` tăng | Worker đang bận hoặc block — starve. Tìm `.Result`, `Sleep`, `lock` chờ I/O trên pool |
+| `pending` tăng, latency tăng, CPU thấp, ThreadCount tăng dần | Dấu hiệu starvation do worker blocking; `availW` vẫn có thể rất lớn vì nó tính từ max, không phải số worker đang rảnh thực tế |
 | `ThreadCount` leo tới hàng trăm, CPU thấp | Thread block, pool tiêm thêm (mục 3.3). Tăng min không sửa nguyên nhân |
 | `availIO` gần 0 | Callback I/O bị block, hoặc sync I/O chiếm completion port |
 
 - Dùng **`Stopwatch`** đo thời gian; **PerfView/dotnet-trace** để phân tích contention/CPU. Contention `Monitor` / `Lock` hiện trong event `Microsoft-Windows-DotNETRuntime` (ContentionStart).
 - **`ConcurrentQueue`**/`Channels` có counters hữu ích (EventSource).
-- Thread pool starve: available ≈ 0 + hàng đợi dài; giảm sync-over-async.
+- Chẩn đoán starvation bằng queue, throughput, CPU và stack của worker; không chỉ dựa vào `GetAvailableThreads`. Giảm sync-over-async khi đó là nguyên nhân.
 
 ---
 

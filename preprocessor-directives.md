@@ -25,9 +25,9 @@ Chúng **không** là runtime API — biểu thức trong `#if` không đọc bi
   - [9. `#pragma warning` / `#pragma checksum`](#9-pragma-warning--pragma-checksum)
   - [10. `#nullable` \& nullable context](#10-nullable--nullable-context)
     - [10.1 Hai context: annotations vs warnings](#101-hai-context-annotations-vs-warnings)
-    - [10.2 `enable` / `disable` / `restore` / `safeonly`](#102-enable--disable--restore--safeonly)
+    - [10.2 `enable` / `disable` / `restore`](#102-enable--disable--restore)
   - [11. File-based apps: `#!` \& `#:` (C# 14)](#11-file-based-apps----c-14)
-    - [11.1 Ai xử lý `#!` / `#:` / `#if`](#111-ai-xử-lý------if)
+    - [11.1 Ai xử lý `#!` / `#:` / `#if`](#111-ai-xử-lý-----if)
     - [11.2 Các `#:` phổ biến \& thứ tự](#112-các--phổ-biến--thứ-tự)
     - [11.3 Pitfalls file-based](#113-pitfalls-file-based)
   - [12. Best practices](#12-best-practices)
@@ -216,7 +216,7 @@ Bí mật / API không được tồn tại ở Release → `#if DEBUG` **cả m
 // public static string Describe() => "...";
 ```
 
-**Pitfall 4 — interface / abstract:** `Conditional` trên implementation: lời gọi qua **interface** có thể **không** bị strip (callvirt tới interface — compiler không biết Conditional). Gọi trực tiếp type cụ thể mới strip. Đừng đặt diagnostic quan trọng sau interface.
+**Pitfall 4 — interface:** method có Conditional không được implement interface member (CS0629), và không được đặt Conditional trên interface method. Nếu contract cần diagnostics, dùng method helper riêng hoặc #if ở call site.
 
 **Pitfall 5 — `Conditional` trên attribute:** `[Conditional("DEBUG")]` trên *class attribute* → attribute đó bị loại khỏi metadata nếu symbol off (`[Obsolete]` không dùng kiểu này).
 
@@ -363,7 +363,7 @@ string must = null;       // warning
 #nullable disable
 string old = null;        // không warning NRT
 
-#nullable restore         // về lại trạng thái trước khối / theo project
+#nullable restore         // về cấu hình Nullable của project
 ```
 
 ### 10.1 Hai context: annotations vs warnings
@@ -379,13 +379,13 @@ Tách hai context để migrate: bật annotation (API đúng `?`) trước, b�
 
 `<Nullable>` trong `.csproj`: `enable` / `disable` / `warnings` / `annotations` — cùng mô hình với directive.
 
-### 10.2 `enable` / `disable` / `restore` / `safeonly`
+### 10.2 `enable` / `disable` / `restore`
 
 | Directive | Annotations | Warnings |
 |---|---|---|
 | `#nullable enable` | Bật | Bật |
 | `#nullable disable` | Tắt (`string` không còn nghĩa non-null) | Tắt |
-| `#nullable restore` | Khôi phục context bao ngoài / project | Khôi phục |
+| `#nullable restore` | Khôi phục mặc định project | Khôi phục mặc định project |
 | `#nullable enable annotations` | Bật | Giữ nguyên warning context |
 | `#nullable disable annotations` | Tắt | Giữ nguyên |
 | `#nullable enable warnings` | Giữ nguyên | Bật |
@@ -402,7 +402,7 @@ public string? Find(string id) => lookup.GetValueOrDefault(id);
 var x = Find("a").Length; // warning nếu Find trả string?
 ```
 
-**`#nullable enable` vs project `disable`:** file opt-in khi migrate từng phần. `restore` không phải “về enable” — về *context trước directive*.
+**`#nullable enable` vs project `disable`:** file có thể opt-in từng phần. Restore về **cấu hình project**, không nhất thiết enable và không nhớ directive trước đó.
 
 **Tương tác với preprocessor:** `#if` có thể bao quanh `#nullable`, nhưng **đừng** dùng `#if DEBUG` để bật/tắt nullable khác nhau giữa Debug/Release — dễ lệch hành vi phân tích giữa môi trường (cùng code, khác cảnh báo / khác ý nghĩa `string`).
 
@@ -410,15 +410,15 @@ var x = Find("a").Length; // warning nếu Find trả string?
 
 Oblivious vs nullable: code cũ không `?` khi disable = *oblivious* (compiler không biết null hay không). Library oblivious + consumer enable → warning khi dereference tùy flow.
 
-**`#nullable restore` stack:** mỗi `enable`/`disable` đẩy context; `restore` pop. Hai lần `enable` lồng rồi một `restore` về tầng giữa, không nhảy về project.
+**Không có stack nullable context:** restore không pop trạng thái trước. Lặp restore vẫn cho cùng mặc định project. Ví dụ dưới giả định `<Nullable>enable</Nullable>`:
 
 ```csharp
 #nullable disable
 #nullable enable
 string a = null;       // warning
-#nullable restore      // disable trở lại
-string b = null;       // không warning
-#nullable restore      // về project (thường enable trên .NET 10)
+#nullable restore      // về project enable
+string b = null;       // vẫn warning
+#nullable restore      // vẫn project enable
 ```
 
 Generated code: `#nullable disable warnings` giữ annotation để caller thấy `string?`, nhưng file gen không spam CS86xx. `#nullable disable` cả hai → caller mất thông tin null.
@@ -436,12 +436,12 @@ Từ **C# 14 / .NET 10**, file-based apps (`dotnet run app.cs`) hỗ trợ direc
 | Directive | Ai xử lý | Vai trò | Compiler C# thấy? |
 |---|---|---|---|
 | `#!` | OS / shell (shebang) | Cho phép `./app.cs` trên Unix | Thường bỏ qua / không là C# token |
-| `#:`… | **Build system** (SDK), compiler **bỏ qua** | Cấu hình package, property, SDK… thay `.csproj` | **Không** parse như C# |
+| `#:`… | SDK xử lý cấu hình build; compiler nhận diện directive | Package, property, SDK thay csproj | Có; cần chế độ file-based và đúng vị trí |
 | `#if` / `#define`… | **Compiler** | Conditional compilation như cũ | Có |
 
-**WHY `#:` không phải `#if`:** file-based app không có `.csproj` để ghi `PackageReference` / `Nullable`. SDK đọc `#:` *trước* compile, sinh project ảo. Compiler không hiểu `#:package` — nếu lọt vào compiler như preprocessor lạ → warning/error tùy host.
+**WHY `#:` không phải `#if`:** SDK đọc package/property để tạo build của file-based app. Compiler vẫn nhận diện cú pháp directive và kiểm tra vị trí; nó không tự restore NuGet hoặc dựng project.
 
-Trong **project-based** compilation, `#:` thường gây warning (không dùng trong `.csproj` apps).
+Trong project-based compilation thông thường, `#:` gây **error CS9298** nếu không bật chế độ file-based phù hợp. Chuyển cấu hình sang csproj khi convert app.
 
 ```csharp
 #!/usr/bin/env dotnet
@@ -463,7 +463,7 @@ Shebang phải **dòng đầu** (Unix). Windows `dotnet run app.cs` bỏ qua `#!
 - `#:property Name=Value` — MSBuild property (`Nullable`, `PublishAot`, `DefineConstants`, `TargetFramework`, …)
 - `#:sdk Some.Sdk` — đổi SDK (ví dụ `Microsoft.NET.Sdk.Web`)
 - `#:project path` — tham chiếu project
-- `#:include path` — include thêm file (SDK mới hơn; kiểm tra phiên bản SDK)
+- `#:include path` — thêm source từ **SDK 10.0.300+** / .NET 11 Preview 3+; include DLL cần .NET 11. [File-based directives](https://learn.microsoft.com/en-us/dotnet/core/sdk/file-based-apps).
 
 **Thứ tự:** `#!` → các `#:` → `using` / TLS. `#:` sau statement C# thường không hợp lệ (phải đầu file, trước token C# — tương tự `#define`).
 
@@ -482,7 +482,7 @@ Muốn symbol biên dịch: `#:property DefineConstants=FEATURE_X` (cộng dồn
 ### 11.3 Pitfalls file-based
 
 1. **Nhầm `#:` với preprocessor** — không viết `#:if DEBUG`. Dùng `#if DEBUG` như project thường; `DEBUG` vẫn theo cấu hình `dotnet run`.
-2. **Copy `#:` vào class library `.csproj`** — compiler/SDK cảnh báo; chuyển `dotnet project convert` khi app lớn.
+2. **Copy `#:` vào class library `.csproj`** — build thông thường báo lỗi; chuyển cấu hình sang csproj, dùng `dotnet project convert` khi app lớn.
 3. **Version lock** — `@*` tiện prototype, CI/production nên pin version.
 4. **Nhiều file** — file-based mặc định một file; `#:include` / convert project khi tách type.
 5. **`#nullable` vs `#:property Nullable=`** — property là mặc định project ảo; `#nullable` trong file vẫn ghi đè vùng. Nên `#:property Nullable=enable` + code annotated.

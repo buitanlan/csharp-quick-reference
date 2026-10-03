@@ -64,7 +64,7 @@ Hệ quả thực tế:
 
 - Debugger / stack trace có thể hiện `$Main`, `<Main>$`, hoặc `Program.Main` — **đừng** parse tên method để phân nhánh logic.
 - Không được **đổi tên** entry thành `Start` / `Run` rồi kỳ vọng runtime tìm ra: compiler chỉ nhận diện **`Main`** (hoặc TLS). Muốn tên khác → gọi từ `Main`.
-- Có cả `Main` sync và `Main` async cùng type → mơ hồ, lỗi biên dịch. Chọn **một**.
+- Compiler ưu tiên Main trả void/int trước Main trả Task/Task<int>. Một sync Main hợp lệ có thể được chọn dù có async overload; nhiều ứng viên cùng mức ưu tiên mới gây ambiguity. Nên giữ một Main rõ ràng.
 - Exception chưa bắt trong async Main được unwrap qua `GetResult()` — stack hơi khác `await` trong app, nhưng process vẫn fail (thường exit ≠ 0). Tránh `.Result` / `.Wait()` thủ công trong `Main` sync nếu đã có `async Main`.
 
 ```csharp
@@ -88,12 +88,12 @@ static void Main<T>(string[] args) { }
 ### 1.3 Thứ tự khởi động (console)
 
 1. Load runtime / native AOT bring-up  
-2. Static ctor của type chứa entry (nếu đụng member static) + module initializers  
+2. Module initializers trước entry; type initializer chạy theo quy tắc static constructor/beforefieldinit
 3. **Entry sync** (`.entrypoint`) — với `async Main`/TLS await: wrapper `GetResult()`  
 4. Body `Main` / `<Main>$`  
 5. Return → process exit code; hoặc `Environment.Exit` cắt giữa chừng  
 
-`static` field `HttpClient` trên `Program` khởi tạo **trước** dòng TLS đầu — lỗi ở đây không nằm trong `try` của TLS trừ khi bọc static ctor.
+Nếu Program có static constructor tường minh, nó chạy trước entry và lỗi ở đó không nằm trong try của TLS. Nếu chỉ có static field initializer, beforefieldinit cho phép runtime chọn thời điểm sớm hơn hoặc trì hoãn tới lúc cần field; không giả định mọi field đều khởi tạo trước dòng TLS đầu.
 
 Bảng chọn chữ ký:
 
@@ -126,7 +126,7 @@ Khi project có nhiều method `Main` hợp lệ (ví dụ nhiều class demo tr
 ```
 
 - Giá trị là **tên type** (namespace + class/struct), **không** phải tên method (`MyApp.Program.Main` là sai). Nested type: `Outer+Inner` theo metadata, trong source thường `Outer.Inner` — dùng tên compiler chấp nhận (CS1555 nếu không tìm thấy).
-- Type phải chứa **đúng một** `Main` hợp lệ. Hai overload `Main()` và `Main(string[])` trên cùng type → vẫn mơ hồ.
+- StartupObject chỉ chọn type; trong type vẫn áp dụng quy tắc ưu tiên sync Main. Hai overload sync hợp lệ Main() và Main(string[]) vẫn mơ hồ.
 - `dotnet build -p:StartupObject=MyApp.Cli.Program` tương đương ghi trong csproj — tiện CI/tạm thời, đừng để lệch với file project lâu dài.
 - Có **top-level statements** → TLS **luôn** là entry; `StartupObject` / `-main` **không** chọn được `Main` khác (§9). Muốn demo nhiều entry: xóa TLS hoặc tách project / dùng `#if` cẩn thận (dễ rối).
 - Không chỉ định khi có nhiều `Main` → **CS0017**. Không có `Main` nào (và không TLS) với `OutputType=Exe` → **CS5001**.
@@ -212,7 +212,7 @@ Chữ ký `Main` được compiler suy ra:
 | có `await`, không `return` | `static async Task Main(string[] args)` |
 | có `await` và `return` | `static async Task<int> Main(string[] args)` |
 
-`return;` không giá trị khi đã có nhánh `return 0` vẫn ra `int` entry. Không khai báo `args` thủ công — đã có sẵn; shadow bằng local `args` là anti-pattern.
+Nếu TLS có return biểu thức thì entry trả int/Task<int>; mọi return phải có giá trị tương thích int, trộn `return;` với `return 0;` gây CS0126. Args đã là tham số ngầm; khai báo lại local tên args ở scope đó gây lỗi.
 
 ---
 
@@ -461,7 +461,7 @@ Shebang phải **dòng đầu**. `#:` ngay sau shebang.
 | `#:package` | NuGet — `Name@Version` hoặc `@*` (floating — cẩn thận lock) |
 | `#:property` | MSBuild property (`PublishAot`, `Nullable`, `LangVersion`, …) |
 | `#:project` | Project reference |
-| `#:include` | Thêm file khác vào compile (SDK 11 / .NET 11; kiểm tra SDK của bạn) |
+| `#:include` | Thêm source: SDK 10.0.300+; include DLL: SDK 11 |
 
 ```bash
 dotnet build file.cs
@@ -478,11 +478,11 @@ File-based **thừa hưởng** `Directory.Build.props` / `Directory.Packages.pro
 
 Cùng quy tắc ngôn ngữ: TLS **hoặc** `Main` cổ điển trong **một** file. Phù hợp học C#, CLI nhỏ, prototype — khi cần nhiều file / team / CI phức tạp → `dotnet project convert`. Convert giữ `#:package` thành `PackageReference`; rà lại `PublishAot` vì project thường **không** bật AOT mặc định (hành vi đổi so với file-based publish).
 
-`#:` không phải C# 15. `#:include` trên SDK mới: nhiều file vẫn **một** entry (TLS chỉ một file trong tập compile — file include thường là type, không thêm TLS thứ hai). Hai file cùng statements → lỗi như project thường.
+File-based `#:include` có từ **SDK 10.0.300+** / .NET 11 Preview 3+. Included source chỉ chứa declaration/helper, **không được thêm top-level statements**; entry vẫn nằm ở file chính. [Quy tắc file-based app](https://learn.microsoft.com/en-us/dotnet/core/sdk/file-based-apps).
 
 Shebang + `dotnet run file.cs` trên Windows (không exec bit) vẫn chạy qua `dotnet`; Unix `./file.cs` cần `chmod +x` và kernel shebang.
 
-`#:property LangVersion=preview` trên file-based **không** biến máy thành SDK 11 — vẫn cần SDK 11. Baseline file-based = C# 14 / `net10.0`. C# 15 (union, `closed`, …) cần `#:property TargetFramework=net11.0` trên SDK 11 (RC1+: ngôn ngữ mặc định là 15, không cần `preview`). `LangVersion=preview` chỉ để thử Unsafe Evolution.
+LangVersion không cài compiler mới: file-based C# 15 vẫn cần SDK 11 và TFM phù hợp. RC1 chọn C# 15 mặc định trên net11.0. Preview bật các feature preview mà compiler đó có; Unsafe Evolution còn cần feature flag riêng, không phải mọi preview đều thuộc Unsafe Evolution.
 
 `dotnet pack file.cs` → tool NuGet (`PackAsTool`); cài `dotnet tool install --add-source`. Không phải thay `dotnet run` lúc dev.
 

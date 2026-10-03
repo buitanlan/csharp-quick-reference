@@ -51,6 +51,7 @@ Chương này tập trung vào **lập trình bất đồng bộ (asynchronous)*
     - [11.3 So sánh \& best practices](#113-so-sánh--best-practices)
   - [12. Channel + async](#12-channel--async)
   - [13. `PeriodicTimer` vs `Task.Delay`](#13-periodictimer-vs-taskdelay)
+  - [14. Ghép tác vụ và giới hạn đồng thời](#14-ghép-tác-vụ-và-giới-hạn-đồng-thời)
 
 ---
 
@@ -78,9 +79,7 @@ var data = await httpClient.GetStringAsync(url);
 Điểm quan trọng:
 
 - **Bạn viết code trông như code tuần tự**, try/catch bình thường,
-- Nhưng runtime/CLR sẽ:
-  - Không block thread khi chờ I/O,
-  - “Bẻ” method thành **state machine** + callbacks để tiếp tục sau khi I/O hoàn thành.
+- **Compiler** chuyển method thành state machine và đăng ký continuation. API I/O bất đồng bộ cho phép trả thread trong lúc chờ; chỉ thêm `async` vào một method blocking không tạo ra lợi ích đó.
 
 `.Result` / `.Wait()` trên UI thread (hoặc ASP.NET cũ có SyncContext) dễ **deadlock**: thread giữ context, Task continuation cần context đó. Async all the way — xem §6 và §9.
 
@@ -167,7 +166,7 @@ Các kiểu trả về hợp lệ:
 4. `ValueTask<T>`
 5. `void` (chỉ dùng cho event handler)
 
-Custom awaitable / `IAsyncEnumerable` không phải *return type của `async` method* theo nghĩa `async Task` — iterator async trả `IAsyncEnumerable<T>` (§10).
+Async method còn có thể trả custom **task-like type** với async method builder phù hợp (`AsyncMethodBuilderAttribute`). Chỉ có `GetAwaiter()` chưa đủ để làm kiểu trả về của async method. Async iterator trả `IAsyncEnumerable<T>` hoặc `IAsyncEnumerator<T>` (§10).
 
 ### 3.1 `Task` & `Task<T>` – phổ biến nhất
 
@@ -325,7 +324,7 @@ Một biểu thức **awaitable** phải có:
 Các kiểu phổ biến:
 
 - `Task`, `Task<T>`, `ValueTask`, `ValueTask<T>`
-- Một số type custom có `GetAwaiter()`.
+- Custom type có `GetAwaiter()`: awaiter cần `IsCompleted`, `GetResult()` và triển khai `INotifyCompletion` (hoặc `ICriticalNotifyCompletion`).
 
 Quy trình (đơn giản hoá):
 
@@ -365,7 +364,7 @@ Compiler sẽ:
 - Sinh `AsyncTaskMethodBuilder<int>` để quản lý `Task<int>` trả về,
 - Sinh `MoveNext()` với một `switch(_state)`.
 
-**Boxing:** SM bắt đầu là **struct** trên stack. Khi `await` chưa completed, `AwaitOnCompleted` có thể **box** SM lên heap (để continuation sống sau khi stack frame biến mất). Fast path `IsCompleted` → không box, không yield.
+**Lưu trữ:** build Release thường sinh state machine dạng struct; Debug có thể sinh class. Khi phải suspend, trạng thái cần sống qua lần gọi hiện tại. .NET hiện đại thường lưu nó trong `AsyncStateMachineBox<TStateMachine>` kết hợp với Task, thay vì luôn cấp phát một box riêng và một Task riêng.
 
 Ý tưởng pseudo-code (giản lược):
 
@@ -448,7 +447,7 @@ Hai đường trong `MoveNext`:
 1. **Fast path** — `awaiter.IsCompleted == true` (cache, `Task.FromResult`, I/O đã xong): `GetResult()` inline, `_state` không nhảy, **không** đăng ký continuation. Method `async` có thể chạy **hoàn toàn đồng bộ** — vẫn trả `Task` completed (hoặc `ValueTask` không alloc).
 2. **Yield path** — chưa xong: `AwaitUnsafeOnCompleted` đăng ký callback, `return` khỏi `MoveNext`. Caller nhận Task pending. Khi I/O xong, thread pool (hoặc SyncContext) gọi `MoveNext` lần nữa với `_state` đã lưu.
 
-**Boxing SM:** struct SM sống trên stack lần gọi đầu. Yield → runtime cần *địa chỉ ổn định* cho callback → box SM lên heap (`SetStateMachine` / `box`). Nhiều `await` yield = một object SM (tái dùng), không N object mỗi await — awaiter field được ghi đè.
+**State machine qua nhiều await:** trạng thái được tái dùng; không sinh một state machine mới cho từng `await`. Cách cấp phát phụ thuộc builder, runtime và cấu hình build; không nên suy ra số allocation chỉ từ số từ khóa `await`.
 
 ```csharp
 async Task FastAsync()
@@ -550,7 +549,7 @@ var data = await client.GetStringAsync(url).ConfigureAwait(false);
 
 **Semantics `ConfigureAwait(false)`:** continuation chạy trên thread pool (hoặc thread hoàn thành I/O), **không** marshal về UI/ASP.NET classic. `ConfigureAwait(true)` = mặc định.
 
-**`ConfigureAwait(ConfigureAwaitOptions)` (.NET 8+)** trên `Task` / `ValueTask`. App thường vẫn chỉ cần `false`. Ba cờ hay gặp (kết hợp bằng `|`):
+**`ConfigureAwait(ConfigureAwaitOptions)` (.NET 8+)** trên `Task` / `Task<T>`. `ValueTask` / `ValueTask<T>` chỉ có overload nhận `bool`. App thường vẫn chỉ cần `false`. Ba cờ hay gặp (kết hợp bằng `|`):
 
 | Cờ | Việc |
 |---|---|
@@ -645,7 +644,7 @@ catch (Exception first)
 }
 ```
 
-Chi tiết unwrap vs `AggregateException`: [exceptions.md §9](exceptions.md#9-ngoại-lệ-trong-asyncawait--song-song).
+Chi tiết unwrap vs `AggregateException`: [exceptions.md §10](exceptions.md#10-ngoại-lệ-trong-asyncawait--song-song).
 
 ### 7.2 Khi không `await` Task
 
@@ -700,7 +699,7 @@ catch (OperationCanceledException)
 
 **Semantics:** cancel là **hợp tác** — token không abort thread. API phải *quan sát* token (`Delay`, `ReadAsync`, `ThrowIfCancellationRequested` trong vòng CPU). Không truyền token = không hủy được giữa chừng (trừ khi API tự timeout).
 
-`TaskCanceledException` : `OperationCanceledException` — bắt base type. Phân biệt cancel vs timeout vs fault: [exceptions.md §10](exceptions.md#10-cancellation-vs-exception).
+`TaskCanceledException` : `OperationCanceledException` — bắt base type. Phân biệt cancel vs timeout vs fault: [exceptions.md §11](exceptions.md#11-cancellation-vs-exception).
 
 ### 8.2 Best practices CancellationToken
 
@@ -793,7 +792,7 @@ await DownloadWithProgressAsync(progress);
 Trước C# 8:
 
 - Dùng `IEnumerable<T>` / `yield return` → **stream sync**, không `await` được bên trong.
-- Dùng `Task<IEnumerable<T>>` → **một cục** collection, chỉ có sau khi xong hết.
+- Dùng `Task<IEnumerable<T>>` → chờ lấy một sequence; sequence có thể lazy, nhưng các bước duyệt tiếp theo vẫn đồng bộ và không có `MoveNextAsync`.
 
 Nhưng cần:
 
@@ -834,7 +833,7 @@ Khai báo:
 - `yield return` bên trong +
 - Có thể `await` trong thân.
 
-Compiler sinh **hai** state machine (async + iterator) — đắt hơn `Task<List<T>>` nếu bạn luôn materialize hết.
+Compiler sinh **một** state machine kết hợp async và iterator, triển khai các interface cần thiết. Nếu luôn materialize toàn bộ, hãy đo trước khi chọn stream thay cho `Task<List<T>>`.
 
 Ví dụ:
 
@@ -952,22 +951,20 @@ await foreach (var x in CountAsync(500, cts.Token))
 
 ### 11.2 Exception & dispose
 
-Async iterator method hỗ trợ `try/catch/finally`:
+Async iterator hỗ trợ xử lý ngoại lệ, nhưng `yield return` không được nằm trong `catch`, `finally` hoặc `try` có `catch`. Mẫu `try/finally` sau là hợp lệ:
 
 ```csharp
-public async IAsyncEnumerable<string> ReadLinesAsync(string path)
+public async IAsyncEnumerable<string> ReadLinesAsync(
+    string path,
+    [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
 {
     using var stream = File.OpenRead(path);
     using var reader = new StreamReader(stream);
 
     try
     {
-        while (!reader.EndOfStream)
-        {
-            var line = await reader.ReadLineAsync();
-            if (line is null) yield break;
+        while (await reader.ReadLineAsync(ct) is { } line)
             yield return line;
-        }
     }
     finally
     {
@@ -985,7 +982,7 @@ Exception giữa `yield` → consumer bắt được trên `MoveNextAsync`/`awai
 
 **`Task<IEnumerable<T>>` vs `IAsyncEnumerable<T>`**:
 
-- `Task<IEnumerable<T>>` → lấy tất cả rồi mới xử lý.
+- `Task<IEnumerable<T>>` → chờ sequence, rồi duyệt đồng bộ; không bắt buộc sequence đã được materialize.
 - `IAsyncEnumerable<T>` → xử lý từng phần tử khi chúng sẵn sàng.
 
 Chọn async stream khi:
@@ -1037,9 +1034,17 @@ var channel = Channel.CreateBounded<WorkItem>(64);
 
 async Task ProduceAsync(CancellationToken ct)
 {
-    await foreach (var item in source.WithCancellation(ct))
-        await channel.Writer.WriteAsync(item, ct);
-    channel.Writer.Complete();
+    try
+    {
+        await foreach (var item in source.WithCancellation(ct))
+            await channel.Writer.WriteAsync(item, ct);
+    }
+    catch (Exception ex)
+    {
+        channel.Writer.TryComplete(ex);
+        throw;
+    }
+    finally { channel.Writer.TryComplete(); }
 }
 
 async Task ConsumeAsync(CancellationToken ct)
@@ -1058,17 +1063,23 @@ async Task ConsumeAsync(CancellationToken ct)
 - Luôn `Complete()` — không Complete → `ReadAllAsync` treo.
 
 ```csharp
-await Task.WhenAll(ProduceAsync(ct), ConsumeAsync(ct));
+using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+async Task GuardAsync(Func<CancellationToken, Task> run)
+{
+    try { await run(pipelineCts.Token); }
+    catch { pipelineCts.Cancel(); throw; }
+}
+await Task.WhenAll(GuardAsync(ProduceAsync), GuardAsync(ConsumeAsync));
 ```
 
-Nhiều consumer: cùng `Reader` cạnh tranh `ReadAsync` (cạnh tranh công bằng) hoặc fan-out N channel. `SingleReader`/`SingleWriter` = true khi đúng 1 — tối ưu.
+Nhiều consumer cùng `Reader` cạnh tranh phần tử; không có bảo đảm fairness. Có thể fan-out qua N channel riêng. `SingleReader`/`SingleWriter = true` là cam kết chỉ có một bên đọc/ghi đồng thời. Hủy chung khi một bên lỗi giúp producer không treo trên channel đầy nếu consumer đã dừng.
 
 **`FullMode` bounded:**
 
 | Mode | Khi đầy |
 |---|---|
 | `Wait` | `WriteAsync` chờ (backpressure — mặc định nên dùng) |
-| `DropWrite` | Bỏ item mới, `TryWrite` false |
+| `DropWrite` | Bỏ item mới; `TryWrite` vẫn trả `true`, `WriteAsync` vẫn hoàn thành thành công |
 | `DropOldest` | Bỏ item cũ nhất, nhận mới |
 | `DropNewest` | Bỏ item mới nhất đã trong kênh |
 
@@ -1087,19 +1098,7 @@ log.Writer.TryWrite(2); // kênh đầy: bỏ 1, giữ 2. TryWrite trả true
 // Wait (mặc định) thì WriteAsync thứ hai sẽ await, không bỏ 1
 ```
 
-**Lỗi qua channel:**
-
-```csharp
-try
-{
-    await ProduceAsync(ct);
-    channel.Writer.Complete();
-}
-catch (Exception ex)
-{
-    channel.Writer.Complete(ex); // Reader.ReadAsync ném ex
-}
-```
+**Lỗi qua channel:** producer ở trên sở hữu việc hoàn tất writer, kể cả khi lỗi. `ReadAsync` trên channel đã hoàn tất có lỗi ném `ChannelClosedException` với lỗi gốc trong `InnerException`; `ReadAllAsync` truyền lỗi hoàn tất ra vòng `await foreach`. Với các mode drop, đăng ký callback `itemDropped` của `Channel.CreateBounded` nếu cần đếm dữ liệu bị bỏ.
 
 `Complete()` hai lần → exception. `TryComplete` an toàn hơn shutdown đua.
 
@@ -1122,7 +1121,10 @@ await Task.Delay(TimeSpan.FromSeconds(1), ct);
 var work = DoWorkAsync(ct);
 var completed = await Task.WhenAny(work, Task.Delay(timeout, ct));
 if (completed != work)
-    throw new TimeoutException(); // work VẪN chạy — WhenAny không hủy
+{
+    ct.ThrowIfCancellationRequested(); // phân biệt hủy với hết giờ
+    throw new TimeoutException(); // work vẫn chạy; cần quản lý completion của nó
+}
 await work;
 ```
 
@@ -1155,7 +1157,7 @@ while (await timer.WaitForNextTickAsync(ct))
 }
 ```
 
-**Semantics:** `WaitForNextTickAsync` hoàn thành theo chu kỳ timer. Nếu `PollAsync` **lâu hơn** period, tick có thể **dồn** (bắt kịp) tùy overload/hành vi — đừng giả sử realtime cứng. Vẫn phụ thuộc tải máy, nhưng API đúng use case polling.
+**Semantics:** các tick xảy ra giữa hai lần chờ được **gộp thành một tick**, không xếp hàng từng tick để chạy bù. Chỉ một consumer được gọi `WaitForNextTickAsync` tại một thời điểm. `Dispose()` làm lần chờ trả `false`; hủy token chỉ hủy lần chờ đó, không tự dispose timer. [API PeriodicTimer](https://learn.microsoft.com/en-us/dotnet/api/system.threading.periodictimer.waitfornexttickasync).
 
 | | `Task.Delay` trong `while` | `PeriodicTimer` |
 |---|---|---|
@@ -1163,7 +1165,7 @@ while (await timer.WaitForNextTickAsync(ct))
 | Polling / heartbeat / host loop | Được nhưng dễ lệch chu kỳ + alloc Task mỗi vòng | **Đúng use case** |
 | Hủy | Token trên `Delay` | Token trên `WaitForNextTickAsync` |
 | Dispose | Không bắt buộc | `using` / `Dispose` timer |
-| Overrun (work > period) | Tự “trượt” thêm Delay | Tick chờ lần `Wait` kế — có thể bắt kịp |
+| Overrun (work > period) | Tự “trượt” thêm Delay | Nhiều tick bị gộp thành một, không chạy bù tất cả |
 
 Worker dài hạn: kết hợp `PeriodicTimer` + linked CTS từ `IHostApplicationLifetime` / shutdown token.
 
@@ -1202,19 +1204,26 @@ CancellationTokenSource? debounce = null;
 async Task OnKeyAsync()
 {
     debounce?.Cancel();
-    debounce = new CancellationTokenSource();
+    using var current = new CancellationTokenSource();
+    debounce = current;
     try
     {
-        await Task.Delay(300, debounce.Token);
-        await SearchAsync();
+        await Task.Delay(300, current.Token);
+        await SearchAsync(current.Token);
     }
-    catch (OperationCanceledException) { }
+    catch (OperationCanceledException) when (current.IsCancellationRequested) { }
+    finally
+    {
+        if (ReferenceEquals(debounce, current)) debounce = null;
+    }
 }
 ```
 
 `TimeProvider.System.CreateTimer` / `PeriodicTimer` testable (.NET 8 `TimeProvider`): inject clock trong unit test — `Task.Delay` thật làm test chậm. `IHostedService` production: `PeriodicTimer` + `stoppingToken`.
 
-**Pitfall `WhenAny` + `Delay` timeout:** Task work **vẫn chạy** sau timeout — cancel `ct` của work, không chỉ `WhenAny`. Không `await work` sau timeout nếu đã cancel (sẽ OCE — bắt có chủ đích).
+Mẫu debounce giả định lời gọi được tuần tự hóa trên UI context; nếu gọi từ nhiều thread cần đồng bộ field `debounce`. Cancellation chỉ có hiệu lực nếu `SearchAsync` tôn trọng token.
+
+**Pitfall `WhenAny` + `Delay` timeout:** work vẫn chạy sau timeout. Yêu cầu hủy qua CTS nếu API hỗ trợ, và tiếp tục quan sát completion/lỗi để cleanup tài nguyên. Cancellation là hợp tác, không bảo đảm work dừng ngay.
 
 ```csharp
 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -1223,10 +1232,32 @@ try
 {
     await DoWorkAsync(timeoutCts.Token);
 }
-catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
 {
-    throw new TimeoutException();
+    throw new TimeoutException("Operation timed out.", ex);
 }
 ```
 
 Gọn hơn `WhenAny`+Delay: một token, work thật sự dừng (nếu API tôn trọng token).
+
+---
+
+## 14. Ghép tác vụ và giới hạn đồng thời
+
+- **Task.WhenAll** chờ mọi task kết thúc, không tự hủy task còn lại khi một task lỗi. Task kết quả Faulted nếu có lỗi; nếu không lỗi nhưng có task bị hủy thì Canceled. `await` thường ném một lỗi, còn `all.Exception` giữ tập lỗi.
+- **Task.WhenAny** trả task hoàn tất đầu tiên; cần `await` task thắng để nhận kết quả/lỗi. Các task còn lại vẫn chạy, phải được quan sát và cleanup.
+- **Task.WaitAsync(timeout, ct)** (.NET 6+) giới hạn thời gian **chờ**, không tự hủy operation gốc. Token của operation cần được truyền riêng nếu muốn cancellation hợp tác.
+
+```csharp
+Task operation = DoWorkAsync(ct);
+await operation.WaitAsync(TimeSpan.FromSeconds(5), ct);
+// Nếu hết giờ, operation có thể vẫn chạy: owner vẫn phải quản lý completion.
+
+await Parallel.ForEachAsync(items, new ParallelOptions
+{
+    MaxDegreeOfParallelism = 8,
+    CancellationToken = ct
+}, async (item, token) => await ProcessAsync(item, token));
+```
+
+Không tạo Task cho toàn bộ nguồn rất lớn rồi chỉ WhenAll: số operation đang mở có thể tăng không giới hạn. Dùng Parallel.ForEachAsync, SemaphoreSlim hoặc bounded Channel theo yêu cầu thứ tự và backpressure. Không chạy đồng thời nhiều query trên cùng DbContext.

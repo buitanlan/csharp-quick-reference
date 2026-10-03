@@ -54,7 +54,7 @@ Tập trung semantics, lifetime, pitfalls (tương tự chương pointers bên G
 | **Gen 0** | Object mới; thu gom thường xuyên, rẻ |
 | **Gen 1** | Sống sót 1 lần GC; đệm short/long-lived |
 | **Gen 2** | Sống lâu; full GC đắt hơn |
-| **LOH** | Object lớn (≈ ≥ 85 KB); compact đắt |
+| **LOH** | Allocation ≥ 85.000 byte theo ngưỡng mặc định; thu gom cùng Gen 2, mặc định không compact |
 
 **Giả thuyết thế hệ:** hầu hết object chết trẻ → quét Gen 0 mang lại nhiều bộ nhớ với chi phí thấp.
 
@@ -161,7 +161,7 @@ if (name.StartsWith("Al"))
 
 ### 3.2 API & vì sao nhanh
 
-- Indexer, `Length`, `Clear`/`Fill`, `CopyTo`/`TryCopyTo`, `Slice` **O(1)**.  
+- Indexer, `Length`, `Slice` **O(1)**. `Clear`/`Fill` và `CopyTo`/`TryCopyTo` thành công xử lý **O(n)** phần tử, không phải O(1).
 - Parsing: `int.TryParse(ReadOnlySpan<char>, …)` — tránh `Substring`.  
 - Zero-alloc cho lát cắt; JIT hay tối ưu biên kiểm trong vòng quen thuộc.
 
@@ -238,7 +238,7 @@ Cùng *ý tưởng* (lát cắt nhớ liên tục), khác **lifetime & nơi số
 | Qua `await` / `yield`? | Không (treo qua suspension) | Có |
 | Tạo từ `stackalloc`? | Có | Không trực tiếp |
 | Zero-alloc slice đồng bộ | ✅ | Token; `.Span` khi dùng |
-| Implicit C# 14 từ `T[]`/`string` | ✅ | `T[]` → `Memory<T>` (API BCL); string → `ReadOnlyMemory<char>` |
+| Tạo từ `T[]`/`string` | Implicit span conversions | `T[]` → `Memory<T>` implicit; string cần `.AsMemory()` để lấy `ReadOnlyMemory<char>` |
 | Chi phí | 2 field (ref + len), stack | struct nhỏ + object gốc |
 
 ```csharp
@@ -288,6 +288,8 @@ Span<byte> bytes = length <= 512
 ```
 
 **Pitfall:** `stackalloc` theo `userLength` không chặn = DoS / StackOverflow. Ngưỡng cứng (256–1024) là bắt buộc trên input ngoài.
+
+**Khởi tạo và vòng lặp:** `stackalloc T[n]` không bảo đảm phần tử bằng zero; gọi `Clear()` trước khi đọc nếu chưa ghi đầy đủ. Không `stackalloc` lặp trong cùng method: các allocation có thể tích lũy đến lúc method return. Cấp phát một buffer ngoài vòng rồi tái sử dụng; ngưỡng phải tính theo **byte** và stack budget, không chỉ số phần tử.
 
 **Vì sao / Khi nào dùng:** buffer tạm < ~1 KB, không async. Lớn hơn → `ArrayPool`.
 
@@ -343,7 +345,7 @@ Show("hello"); // string → ReadOnlySpan<char>
 static void F(string s) => Console.WriteLine("string");
 static void F(ReadOnlySpan<char> s) => Console.WriteLine("span");
 
-F("x"); // C# 14: có thể chọn span — kiểm tra overload của bạn
+F("x"); // chọn string: identity conversion tốt hơn string → ReadOnlySpan<char>
 ```
 
 > Nâng C# 14 có thể đổi overload resolution chỗ có nhiều overload `T[]`/`Span`/`ReadOnlySpan` — chạy test kỹ.
@@ -366,18 +368,18 @@ void Process(scoped Span<int> data)
 }
 
 Span<int> stack = stackalloc int[4];
-Process(stack); // OK nhờ scoped trên tham số
+Process(stack); // scoped cam kết callee không cho span escape
 ```
 
 - **`scoped` parameter:** cấm return/ref escape; cho phép truyền `stackalloc`.  
 - **`scoped` local** + **ref fields:** chứng minh không lưu ref nguy hiểm.
 
-**Semantics (ý tưởng):** compiler gán *lifetime* cho mỗi ref/`ref struct`. `scoped` = “lifetime ≤ method hiện tại”. Không `scoped`, tham số `Span` có thể bị coi là *gọi lên từ caller* — không nhận `stackalloc` vì stackalloc chết khi method này return… thực ra stackalloc của *caller* sống suốt caller; vấn đề là callee **trả** span đó ra ngoài callee trong khi callee đã return. `scoped` nói: tôi **không** trả / lưu escape.
+**Semantics:** `scoped` thu hẹp escape scope của tham chiếu hoặc byref-like value tại compile-time. Tham số `Span<T>` bình thường **vẫn nhận được stackalloc từ caller**, và có thể trả view về caller nếu lifetime hợp lệ. `scoped Span<T>` cam kết callee không trả/lưu span đó ra ngoài; không kéo dài lifetime hay pin bộ nhớ.
 
 ```csharp
 ref struct Holder { public Span<int> Data; }
 
-// Không scoped: compiler sợ Process lưu span vào field tĩnh / trả ra
+// scoped không cho trả span ra ngoài; vẫn dùng view local được
 void Ok(scoped Span<int> data)
 {
     Span<int> local = data; // scoped local — không return local
@@ -389,13 +391,13 @@ void Hash<TBuffer>(scoped TBuffer buffer)
     where TBuffer : allows ref struct { /* ... */ }
 ```
 
-**So sánh không ghi `scoped`:** nhiều API `Span` tham số *đã* scoped ngầm (ngôn ngữ coi tham số `ref struct` theo quy tắc mặc định). Ghi tường minh khi compiler báo CS8352/CS9077… hoặc khi nhận `stackalloc` từ caller.
+**Mặc định:** tham số by-value `Span<T>` **không tự scoped** chỉ vì là ref struct. `out` parameters và `this` của struct có các quy tắc scoped ngầm riêng; `[UnscopedRef]` có thể thay đổi hợp đồng ở những vị trí được cho phép. Đọc chữ ký API và diagnostic lifetime thay vì đoán từ tên kiểu.
 
 > Thư viện low-level: nếu compiler báo lifetime, đừng bỏ `ref struct`/`scoped` chỉ để “cho compile”.
 
 **Pitfall:** `scoped` không phải “thread-safe” hay “pinned”. Nó chỉ là ràng buộc escape lúc compile.
 
-**Vì sao / Khi nào dùng:** viết API nhận `Span`/`ref struct`/generic `allows ref struct`. Caller `stackalloc` mới truyền được.
+**Vì sao / Khi nào dùng:** API tiêu thụ `Span`/`ref struct`/generic `allows ref struct` mà không cho escape, nhất là khi có ref fields. Không cần thêm `scoped` chỉ để nhận stackalloc.
 
 ---
 
@@ -455,7 +457,7 @@ static int Add(int a, int b) => a + b;
 <Features>$(Features);updated-memory-safety-rules</Features>
 ```
 
-**Baseline 14:** khai báo `T*`, `&x`, `fixed`, `sizeof`, dereference — đều trong `unsafe`. `AllowUnsafeBlocks` vẫn là cổng cho từ khóa `unsafe`.
+**Baseline 14:** khai báo `T*`, `&x`, `fixed`, dereference cần `unsafe`. `sizeof` trên các kiểu built-in được đặc tả và `stackalloc` vào `Span<T>` được dùng trong safe code. `AllowUnsafeBlocks` là cổng cho unsafe context.
 
 **Khi preview + feature flag**, các thao tác sau **không** cần `unsafe` context:
 
@@ -552,6 +554,8 @@ ReadOnlySpan<byte> utf16 = MemoryMarshal.AsBytes("abcd".AsSpan());
 
 - Mạnh cho serializer/hash/interop — dễ sai alignment/lifetime.  
 - `CollectionsMarshal.AsSpan(List<T>)`: vô hiệu nếu list reallocate sau đó.
+
+`MemoryMarshal.Cast<TFrom,TTo>` không phải decoder portable: không đổi endianness, có thể bỏ phần byte dư khi kích thước không chia hết, và không nhận struct chứa managed references. Đọc protocol bằng `BinaryPrimitives.Read*LittleEndian` / `Read*BigEndian` khi cần byte order rõ ràng. Với `CollectionsMarshal.AsSpan`, không thêm/xóa phần tử trong thời gian view đang được dùng, kể cả khi chưa reallocate.
 
 **Vì sao / Khi nào dùng Marshal:** reinterpret bytes. Không dùng để ghi đè `string` (phá intern/immutability).
 

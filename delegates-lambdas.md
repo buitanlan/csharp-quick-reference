@@ -56,7 +56,7 @@ public delegate bool Filter<in T>(T item); // có thể khai báo variance
 ```
 
 - Delegate là **sealed class** kế thừa `System.MulticastDelegate`.
-- Thuộc tính hữu ích: `.Target` (instance được capture — `null` nếu static), `.Method` (MethodInfo).
+- `.Target` là target object của method được bind, `.Method` là MethodInfo. Method static thông thường có Target=null, nhưng static lambda có thể được compiler đặt trên singleton; Target không phải phép kiểm đáng tin để suy ra lambda có capture.
 
 ### 2.2 Gán & gọi
 
@@ -169,7 +169,7 @@ Func<string,int> f = Parse; // method group conversion
 
 - Khi có **nhiều overload**, compiler chọn theo *overload resolution*.
 - Nếu mơ hồ, cần **cast** đích rõ ràng: `(Func<string,int>)Parse`.
-- Method group **không** cấp phát closure; `x => Parse(x)` có thể cấp phát lambda (tùy capture). Ưu tiên method group trên hot path.
+- Method group cho static method không cần closure; local function hoặc instance method có thể giữ state/target. Lambda không capture cũng có thể được compiler cache. Đo allocation của call site trước khi chọn chỉ vì cú pháp.
 
 ---
 
@@ -177,9 +177,9 @@ Func<string,int> f = Parse; // method group conversion
 
 ```csharp
 // Lambda cơ bản
-(int x) => x * x
-x => x * x              // suy kiểu
-(string s) => { Console.WriteLine(s); return s.Length; } // statement lambda
+Func<int, int> square1 = (int x) => x * x;
+Func<int, int> square2 = x => x * x; // suy kiểu theo target
+Func<string, int> length = (string s) => { Console.WriteLine(s); return s.Length; };
 ```
 
 > **C# 9**: *static lambda* — `static x => ...` không capture được biến ngoài.  
@@ -197,13 +197,13 @@ x => x * x              // suy kiểu
 Cú pháp cũ (C# 2.0), vẫn hữu dụng khi cần `goto`, nhiều `return`, hoặc không muốn khai báo tham số:
 
 ```csharp
-delegate(int x) { return x * x; }
+Func<int, int> square = delegate(int x) { return x * x; };
 ```
 
 ### 6.3 Async lambda
 
 - Gắn từ khóa `async`: `async x => { await ...; }`
-- Kiểu trả về: `Task` / `Task<T>` / **chỉ `void` cho event handler** (không nên dùng `async void` trong các trường hợp khác).
+- Kiểu trả về theo delegate đích: Task/Task<T>, ValueTask/ValueTask<T> hoặc custom task-like type; chỉ chọn void khi event contract yêu cầu.
 - Không thể vừa `async` vừa `yield` (iterator).
 
 ```csharp
@@ -334,6 +334,8 @@ public delegate void Consumer<in T>(T item);             // contravariant tham s
 - Tương tự như `Func<in ..., out TResult>` và `Action<in ...>`.
 - Cho phép *thay thế kiểu* thuận tiện khi kế thừa (ví dụ `IAnimal` ↔ `Cat`).
 
+Variance conversion chỉ áp dụng cho reference type, không chuyển Func<int> thành Func<object>. Chuyển variance giữ runtime delegate type ban đầu; combine hai delegate có runtime type khác nhau có thể ném ArgumentException dù biến có cùng kiểu khai báo.
+
 ```csharp
 Func<string> g = () => "hi";
 Func<object> f = g; // OK — out TResult covariant
@@ -417,7 +419,7 @@ Mỗi `Compile()` ≈ sinh method động. ASP.NET: compile một lần (static/
 
 **Pitfall statement lambda:** `Expression<Func<int,int>> e = x => { return x * x; };` **không compile** — phải `x => x * x`.
 
-**Pitfall capture trong tree:** `int min = 3; Expression<Func<int,bool>> e = x => x > min;` — cây chứa `Constant` tới closure; đổi `min` sau khi build tree **có thể** vẫn thấy giá trị mới (closure) tùy compile — đừng phụ thuộc; capture snapshot `var local = min` rồi đóng `local` nếu cần ổn định. EF: capture local thường dịch thành constant SQL.
+**Capture trong tree:** cây chứa reference tới closure, nên delegate từ `e.Compile()` đọc giá trị hiện tại của min. Muốn snapshot, copy sang local rồi không sửa local đó. EF thường parameterize captured local khi execute; kiểm SQL/provider nếu cần biết thời điểm lấy giá trị.
 
 ---
 
@@ -504,13 +506,13 @@ event EventHandler? Changed
             h = e;
             var n = (EventHandler?)Delegate.Combine(h, value);
             e = Interlocked.CompareExchange(ref _changed, n, h);
-        } while (e != h);
+        } while (!ReferenceEquals(e, h)); // CAS so sánh identity, không delegate equality
     }
     remove { /* tương tự Delegate.Remove */ }
 }
 ```
 
-**Covariant event?** Event không covariant trên `T` args một cách tùy tiện — `EventHandler<Derived>` không gán `EventHandler<Base>` (invoke safety). Dùng `EventHandler<T>` với `T` cụ thể.
+**Baseline .NET 10:** EventHandler<TEventArgs> là **contravariant** (`in`), nên handler nhận Base có thể dùng nơi cần handler nhận Derived; chiều ngược lại không an toàn. Đây là thay đổi so với một số target cũ. Variance conversion không đổi runtime delegate type, nên không tùy tiện combine delegate đã chuyển variance với delegate runtime type khác.
 
 Interface event: implementer có thể explicit; subscriber chỉ `+=` qua interface, không `Invoke`.
 
@@ -533,7 +535,7 @@ unsafe delegate*<int, void> fp;
 ## 14. Hiệu năng & Best Practices
 
 1. **Ưu tiên method group** khi không cần capture: `DoSomethingAsync` thay vì `x => DoSomethingAsync(x)` để tránh closure.
-2. **Static lambda** nếu có thể: `static x => Transform(x)` — không capture, không cấp phát.
+2. Static lambda nếu có thể: `static x => Transform(x)` không cấp phát closure; delegate và iterator của pipeline vẫn có thể allocation.
 3. **Cache delegate dùng lặp lại** (đặc biệt trong loop/hot-path).
 4. **Tránh lạm dụng LINQ/lambda** trong hot-path → cân nhắc `for`/`Span<T>`.
 5. **Unsubscribe** event để tránh rò rỉ. Giữ **cùng** instance handler khi `-=`.
@@ -561,12 +563,12 @@ Process(new[]{1,2,3,4}, x => x%2==0, Console.WriteLine);
 // output: 2 4
 ```
 
-### 15.2 Ghép pipeline không cấp phát (static lambda)
+### 15.2 Ghép pipeline không capture (static lambda)
 
 ```csharp
 var data = Enumerable.Range(1, 1_000_000);
 var sum = data.Where(static x => (x & 1) == 0)     // static: không capture
-              .Select(static x => x * 2)
+              .Select(static x => (long)x * 2) // tổng 500_001_000_000, vượt int
               .Sum();
 ```
 

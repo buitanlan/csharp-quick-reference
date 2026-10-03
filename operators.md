@@ -13,7 +13,7 @@ Toán tử quyết định *thứ tự đánh giá*, *null-safety*, và *bằng 
     - [2.1 Pitfall precedence thường gặp](#21-pitfall-precedence-thường-gặp)
   - [3. Toán tử số học](#3-toán-tử-số-học)
   - [4. Toán tử tăng/giảm `++`/`--`](#4-toán-tử-tănggiảm---)
-  - [5. So sánh \& bằng/khác — `==` vs `Equals`](#5-so-sánh--bằngkhác----vs-equals)
+  - [5. So sánh \& bằng/khác — `==` vs `Equals`](#5-so-sánh--bằngkhác---vs-equals)
   - [6. Bit \& logic: `&` `|` `^` `~` `&&` `||` `!`](#6-bit--logic-------)
   - [7. Dịch bit: `<<` `>>` `>>>`](#7-dịch-bit---)
   - [8. Gán \& gán hợp (compound assignment)](#8-gán--gán-hợp-compound-assignment)
@@ -53,7 +53,7 @@ Toán tử quyết định *thứ tự đánh giá*, *null-safety*, và *bằng 
 Từ **cao** → **thấp** (tóm tắt nhóm chính):
 
 1. **Postfix**: `x++` `x--` `x!` (null-forgiving) `a[b]` `a.b` `a?.b` `a?[^i]` `a()` `new T()` `typeof` `checked` `unchecked` `default` `nameof` `stackalloc` — *trái → phải*
-   > Lưu ý: `default`, `nameof`, và `stackalloc` là **contextual keywords** (từ khóa phụ thuộc ngữ cảnh) - chỉ có ý nghĩa đặc biệt trong ngữ cảnh nhất định, có thể dùng làm identifier ở chỗ khác.
+   > `default` và `stackalloc` là **reserved keywords**; `nameof` là contextual keyword. Precedence quyết định cách nhóm biểu thức; các toán hạng vẫn được đánh giá trái → phải, trừ nhánh bị ngắn mạch.
 2. **Unary**: `+x` `-x` `!x` `~x` `++x` `--x` `&x` `*x` `await x` `^i` (index) — *phải → trái*
 3. **Multiplicative**: `*` `/` `%` — *trái → phải*
 4. **Additive**: `+` `-` — *trái → phải*
@@ -62,7 +62,7 @@ Từ **cao** → **thấp** (tóm tắt nhóm chính):
 7. **Equality**: `==` `!=` — *trái → phải*
 8. **Bitwise AND/XOR/OR**: `&` `^` `|` — *trái → phải*
 9. **Conditional AND/OR**: `&&` `||` — *trái → phải*
-10. **Null-coalescing**: `??` — *trái → phải*
+10. **Null-coalescing**: `??` — *phải → trái* (`a ?? b ?? c` = `a ?? (b ?? c)`)
 11. **Conditional**: `?:` — *phải → trái*
 12. **Assignment**: `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=` `>>>=` `??=` — *phải → trái*
 13. **Lambda**: `=>` (ràng buộc riêng, thường thấp)
@@ -125,7 +125,9 @@ int c = -(-5);      // 5
 **Overflow**: dùng `checked` để ném `OverflowException`:
 
 ```csharp
-checked { int x = int.MaxValue + 1; } // ném
+int max = int.MaxValue;
+checked { int x = max + 1; } // OverflowException lúc chạy
+// checked(int.MaxValue + 1) là biểu thức hằng → lỗi compile CS0220
 ```
 
 `decimal` phù hợp tài chính; `%` hoạt động trên số nguyên và `decimal`. Chia nguyên `int` cắt về 0 (không “floor” với số âm như một số ngôn ngữ). `%` với số âm: dấu theo dividend (`-7 % 3 == -1`).
@@ -170,7 +172,7 @@ Ba cơ chế **không thay thế nhau**:
 
 ```csharp
 object a = "hi", b = new string("hi".ToCharArray());
-Console.WriteLine(a == b);          // True — runtime type string, operator string ==
+Console.WriteLine(a == b);          // False — kiểu tĩnh object: so sánh tham chiếu
 Console.WriteLine(a.Equals(b));     // True
 Console.WriteLine(ReferenceEquals(a, b)); // False
 
@@ -207,20 +209,20 @@ public sealed class UserId : IEquatable<UserId>
 }
 ```
 
-**Pitfall NaN:** `double.NaN == double.NaN` là **false**; `Equals` trên `double` cũng false với NaN. Dùng `double.IsNaN`.
+**Pitfall NaN:** `double.NaN == double.NaN` là **false**, nhưng `double.NaN.Equals(double.NaN)` là **true**. Equality comparer mặc định dùng `Equals`; kiểm tra NaN bằng `double.IsNaN`.
 
-**Pitfall floating:** `==` trên `float`/`double` exact bit — tiền tệ dùng `decimal` hoặc epsilon có chủ đích.
+**Pitfall floating:** `==` so sánh giá trị floating-point chính xác, **không** so bit (`+0.0 == -0.0` là true). Với kết quả tính toán gần nhau, chọn tolerance tuyệt đối/tương đối theo bài toán; `double.Epsilon` không phải tolerance phổ dụng. Tiền tệ dùng `decimal` với quy tắc làm tròn.
 
-**`Equals` tĩnh `object.Equals(a, b)`:** an toàn null (cả hai null → true; một null → false; không NRE). Khác `a.Equals(b)`. Dictionary key null: tùy comparer.
+**`Equals` tĩnh `object.Equals(a, b)`:** xử lý null trước khi gọi equality (cả hai null → true; một null → false). Khác `a.Equals(b)`. `Dictionary<TKey,TValue>` không nhận key null, kể cả khi comparer hỗ trợ null.
 
 ```csharp
 object.Equals(null, null);          // True
 EqualityComparer<string>.Default.Equals(null, null); // True
 ```
 
-**GetHashCode contract:** `Equals` true ⇒ hash bằng. Đổi field dùng trong `Equals` khi object đang trong `Dictionary` → mất key. `record` sinh `Equals`/`GetHashCode` theo primary properties — mutable record làm key là bẫy.
+**GetHashCode contract:** Equals true ⇒ hash bằng. Đổi field tham gia equality khi object là dictionary key có thể mất lookup. Record equality xét các instance field liên quan, kể cả backing field của property ngoài primary constructor; reference tới List vẫn dùng equality của List, không tự so nội dung.
 
-**`==` trên generic `T`:** không dùng `==` với `T` không ràng `class` (trừ `where T : class`). Dùng `EqualityComparer<T>.Default` — chọn `IEquatable`, tránh box struct.
+**== trên generic T:** unconstrained T không có phép == giữa hai giá trị T. Constraint class cho reference equality; constraint chứa static abstract operator (như IEqualityOperators) cho phép generic operator dispatch. Khi cần equality mặc định, dùng EqualityComparer<T>.Default để chọn IEquatable và thường tránh boxing struct.
 
 ---
 
@@ -317,7 +319,7 @@ var r2 = (flag ? a : b) ?? c;
 
 Throw expression: `x ?? throw new ArgumentNullException(nameof(x))` — vế phải `??` có thể `throw`.
 
-**Pitfall kiểu:** `condition ? 1 : null` → `int?`. `condition ? "a" : 1` không compile (không common type).
+**Pitfall kiểu:** `int? x = condition ? 1 : null;` hợp lệ nhờ kiểu đích, nhưng `var x = condition ? 1 : null;` không suy được kiểu. Tương tự, `object x = condition ? "a" : 1;` hợp lệ từ C# 9; dùng `var` ở đây thì không có kiểu chung.
 
 ---
 
@@ -329,7 +331,7 @@ int len = name?.Length ?? 0; // ?. tránh NRE, ?? cung cấp mặc định
 
 dict?["key"]?.ToString();    // ?[] với indexer
 
-obj!.Property // null-forgiving: cam kết với compiler là không null (cẩn thận)
+var property = obj!.Property; // null-forgiving: chỉ tắt cảnh báo NRT
 ```
 
 - `??` và `??=` chỉ kiểm `== null`.
@@ -375,7 +377,7 @@ customer?.Order = CreateOrderAndLog(); // null customer → không log, không t
 
 2. `??=` kết hợp `?.` dễ đọc nhầm: `customer?.Tag ??= "x"` — nếu `customer` null, không gán gì; nếu `Tag` null mới gán `"x"`.
 3. Không thay `if` khi nhánh null phải làm việc khác (`throw`, default object).
-4. Event: `handler?.Invoke(...)` đã có từ trước (gọi, không phải assignment). Đừng nhầm với `obj?.Event += H` — **không** hợp lệ (subscribe cần receiver chắc chắn).
+4. Event: `obj?.Event += H` / `-= H` cũng hợp lệ từ **C# 14**. Receiver null thì bỏ qua đăng ký/hủy; đây là conditional assignment, khác `handler?.Invoke(...)`.
 
 ---
 
@@ -424,7 +426,7 @@ var last = arr[^1];    // 4
 var mid  = arr[1..^1]; // {1,2,3}
 ```
 
-Hoạt động với `string`, `Span<T>`, `Index`, `Range`, và các type tự cài indexer `this[Index]`/`this[Range]`. `arr[..]` copy/`AsSpan` tùy target typed.
+Hoạt động với `string`, `Span<T>` và các type có pattern/indexer `Index`/`Range` phù hợp. **`arr[1..3]` luôn tạo mảng mới**, kể cả khi sau đó gán sang `Span<T>`. Muốn view không copy: `arr.AsSpan()[1..3]`. `string` slice thường tạo chuỗi mới; `Span` slice là view.
 
 ---
 
@@ -432,12 +434,12 @@ Hoạt động với `string`, `Span<T>`, `Index`, `Range`, và các type tự c
 
 - **`await`**: tạm ngưng method async cho đến khi awaitable hoàn thành. (*Xem phần [Async](async.md)*)
 - **`nameof(x)`**: lấy **tên** định danh dạng chuỗi, không bị rename runtime (an toàn refactor).
-- **`sizeof(T)`**: kích thước byte của kiểu unmanaged (với managed struct, thường cần `unsafe`).
+- **`sizeof(T)`**: kích thước representation của kiểu; các kiểu built-in được đặc tả cho phép dùng trong safe code. Struct unmanaged/generic thường cần `unsafe`; `Unsafe.SizeOf<T>()` đo managed representation mà không mở unsafe context.
 - **`typeof(T)`**: trả `System.Type` của `T`.
 - **`checked` / `unchecked`**: bật/tắt kiểm tra overflow số học.
 - **`default`**: literal/expr tạo giá trị mặc định của `T`.
 - **`new`**: tạo instance; cũng là **operator** ở mức ngữ nghĩa.
-- **`stackalloc`**: cấp phát trên stack (unsafe) cho buffer `Span<T>`/con trỏ.
+- **`stackalloc`**: cấp phát trên stack; đích `Span<T>`/`ReadOnlySpan<T>` không cần `unsafe`, đích con trỏ cần unsafe context trên baseline.
 
 ```csharp
 var s = nameof(Person.Name);     // "Name"
@@ -445,7 +447,7 @@ var t = typeof(List<string>);    // System.Type
 Span<byte> buf = stackalloc byte[256]; // stack buffer
 ```
 
-`nameof` **không** đánh giá argument (`nameof(DoWork())` lấy tên `DoWork`, không gọi). `nameof(this.X)` → `"X"`.
+`nameof` **không** đánh giá argument: `nameof(DoWork)` lấy tên `"DoWork"`; **`nameof(DoWork())` không hợp lệ**. `nameof(this.X)` → `"X"`.
 
 ### `nameof` với unbound generics (C# 14)
 
@@ -485,7 +487,7 @@ Unbound `nameof` hữu ích source-gen: `[LoggerMessage(EventName = nameof(MyHan
 
 ### 14.1 Overload cổ điển (`static`)
 
-- Cho phép định nghĩa lại nghĩa của toán tử trên **class/struct** (không phải interface).
+- Cho phép định nghĩa toán tử trên **class/struct**; interface có thể khai báo `static abstract` / `static virtual` operators từ C# 11 để phục vụ generic math.
 - Khai báo `public static <ret> operator +(T a, T b) { ... }`.
 
 **Overload được** (tiêu biểu): `+ - ! ~ ++ -- true false * / % & | ^ << >> == != < > <= >=`
@@ -571,14 +573,15 @@ public class Counter
 
 var c = new Counter();
 ++c;   // ưu tiên instance void operator ++ khi c là biến
-c++;   // compiler vẫn dùng instance op khi hợp lệ; giá trị biểu thức = Value trước tăng
+c++;   // kết quả bị bỏ: ưu tiên instance op
+var old = c++; // kết quả được dùng: chọn static operator ++
 ```
 
 Luật nhanh:
 
 - Instance: `public void operator ++()` / `--()` — **không** tham số, **không** `static`.
 - Prefix trên biến → ưu tiên instance; nếu không phải biến / không có instance op → dùng static unary.
-- Một khai báo instance phục vụ cả prefix và postfix (compiler lấy giá trị trước/sau tùy ngữ cảnh).
+- Instance op dùng được cho prefix và postfix **khi kết quả postfix bị bỏ**. Nếu dùng giá trị `c++`, compiler dùng static op; chỉ khai báo instance op thì trường hợp này không compile. Với class, kết quả prefix là tham chiếu đến instance đã mutate, không phải property `Value`.
 - Reference type: instance op trên `null` → `NullReferenceException`.
 
 ---
@@ -634,12 +637,13 @@ Quy tắc nhanh:
 
 ```csharp
 bool? p = null, q = true;
-bool? r = p & q;  // false?  — lifted bool &: null & true → null? 
-                  // Thực tế: null & true = null; null & false = false; true & true = true
-bool? s = p && q; // && trên bool? không ngắn mạch giống bool — hạn chế; ưu tiên HasValue
+bool? r = p & q;  // null; null & false = false
+bool? s = p | q;  // true; null | false = null
+// p && q / p || q không compile: bool? không hỗ trợ && / ||
+bool both = p is true && q is true; // bool, ngắn mạch
 ```
 
-**Không lifted:** `++`/`--` trên `T?` tăng `.Value` nếu `HasValue`. User-defined operator trên `T` được lift nếu operand `T?` và operator trả value type.
+`++`/`--` trên nullable số cũng được **lift**: có giá trị thì tăng/giảm, null thì vẫn null. Static user-defined operators có thể được lift khi chữ ký thỏa quy tắc value type; không áp dụng tùy tiện cho instance operators C# 14.
 
 ```csharp
 int? n = 3;
